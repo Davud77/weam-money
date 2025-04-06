@@ -1,0 +1,13 @@
+services:
+  weam-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: weam-app
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./database.sqlite:/app/database.sqlite
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
