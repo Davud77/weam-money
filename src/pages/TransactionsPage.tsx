@@ -20,6 +20,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import { DataGrid, GridColDef, GridToolbar, GridPaginationModel } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ThemeContext } from '../ThemeContext';
@@ -286,6 +287,27 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API_URL}/transactions/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      });
+      if (res.status === 401 || res.status === 403) {
+        navigate('/login');
+        throw new Error('Не авторизован или нет доступа');
+      }
+      if (!res.ok) throw new Error('Ошибка удаления транзакции');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    },
+    onError: (err: unknown) => {
+      if (err instanceof Error) showError(err.message);
+    },
+  });
+
   // Открыть/закрыть Drawer
   const handleOpenDrawer = (type: OperationType) => {
     setForm({ ...emptyForm, operationType: type });
@@ -336,6 +358,10 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
         remainder: editRow.total - editRow.advance,
       });
     }
+  };
+
+  const handleDelete = (id: number) => {
+    deleteMutation.mutate(id);
   };
 
   // Колонки: отключаем встроенную сортировку (sortable: false),
@@ -559,14 +585,19 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     {
       field: 'actions',
       headerName: 'Действия',
-      width: 100,
+      width: 120,
       sortable: false,
       filterable: false,
       renderHeader: () => <Typography variant="body2">Действия</Typography>,
       renderCell: (params) => (
-        <IconButton onClick={() => handleEdit(params.row)}>
-          <EditIcon />
-        </IconButton>
+        <Stack direction="row" spacing={1}>
+          <IconButton onClick={() => handleEdit(params.row)} size="small">
+            <EditIcon />
+          </IconButton>
+          <IconButton onClick={() => handleDelete(params.row.id)} size="small">
+            <DeleteIcon />
+          </IconButton>
+        </Stack>
       ),
     },
   ];
