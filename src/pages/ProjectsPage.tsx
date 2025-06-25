@@ -184,7 +184,7 @@ const ProjectsPage: React.FC<ProjectsPageProps> = ({ showError }) => {
           backdropFilter: 'blur(4px)',
           borderRadius: 2,
           p: 2,
-          border: isDark ? '1px solid #444' : '1px solid #ddd',
+          border: isDark ? '0px solid #444' : '0px solid #ddd',
           color: isDark ? '#fff' : '#000',
           maxWidth: '1920px', // максимальная ширина 1920px
             mx: 'auto', // центрирование

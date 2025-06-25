@@ -275,7 +275,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
     backdropFilter: 'blur(4px)',
     borderRadius: 2,
     p: 2,
-    border: isDark ? '1px solid #444' : '1px solid #ddd',
+    border: isDark ? '0px solid #444' : '0px solid #ddd',
     maxWidth: '1920px',
     mx: 'auto',
     color: isDark ? '#fff' : '#000',
@@ -291,7 +291,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
         minHeight: '100vh',
         p: 2,
         pt: 12,
-        border: isDark ? '1px solid #444' : '1px solid #ddd',
+        border: isDark ? '0px solid #444' : '0px solid #ddd',
       }}
     >
       <Box sx={containerSx}>
@@ -321,7 +321,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
                   ? 'rgba(0,0,0,0.8) !important'
                   : 'rgba(255,255,255,0.8) !important',
                 color: isDark ? '#fff !important' : '#000 !important',
-                boxShadow: isDark ? `0px 1px 0px 0px var(--DataGrid-rowBorderColor) !important` : undefined,
+                boxShadow: isDark ? `0px 0px 0px 0px var(--DataGrid-rowBorderColor) !important` : undefined,
               },
               '& .MuiDataGrid-toolbarContainer': {
                 backgroundColor: isDark
@@ -337,7 +337,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
                   ? 'rgba(0,0,0,0.8) !important'
                   : 'rgba(255,255,255,0.8) !important',
                 color: isDark ? '#fff !important' : '#000 !important',
-                boxShadow: isDark ? `0px 1px 0px 0px var(--DataGrid-rowBorderColor) !important` : undefined,
+                boxShadow: isDark ? `0px 0px 0px 0px var(--DataGrid-rowBorderColor) !important` : undefined,
                 pointerEvents: 'none',
               },
               '& .MuiTablePagination-toolbar': {
@@ -353,7 +353,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
               '& .MuiDataGrid-virtualScrollerRenderZone.css-1vouojk': {
                 backgroundColor: isDark ? 'rgba(0,0,0,0.8) !important' : undefined,
                 color: isDark ? '#fff !important' : undefined,
-                boxShadow: isDark ? `0px 1px 0px 0px var(--DataGrid-rowBorderColor) !important` : undefined,
+                boxShadow: isDark ? `0px 0px 0px 0px var(--DataGrid-rowBorderColor) !important` : undefined,
               },
               '& .MuiDataGrid-virtualScroller': {
                 '&::-webkit-scrollbar': {
@@ -375,7 +375,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
           />
         </Box>
         <Drawer anchor="right" open={openDrawer} onClose={handleCloseDrawer}>
-          <Box sx={{ width: { xs: '100%', sm: 400 }, p: 2 }}>
+          <Box sx={{ width: { xs: '100%', sm: 400 }, p: 2, pt: 10  }}>
             <Typography variant="h6" sx={{ mb: 2 }}>
               Добавить пользователя
             </Typography>

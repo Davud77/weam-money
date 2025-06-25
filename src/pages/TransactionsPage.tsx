@@ -16,19 +16,14 @@ import {
   MenuItem,
   IconButton,
 } from '@mui/material';
-import {
-  DataGrid,
-  GridColDef,
-  GridToolbar,
-  GridPaginationModel,
-  GridSortModel,
-} from '@mui/x-data-grid';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import { DataGrid, GridColDef, GridToolbar, GridPaginationModel } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ThemeContext } from '../ThemeContext';
 
-// ---------- Типы -------------
 type OperationType = 'Расход' | 'Доход';
 
 export interface Transaction {
@@ -40,7 +35,7 @@ export interface Transaction {
   date: string;
   total: number;
   advance: number;
-  tax: number;  // дополнительное поле
+  tax: number;
   remainder: number;
   operationType: OperationType;
   note?: string;
@@ -52,7 +47,6 @@ interface ResponsibleUser {
   nickname: string;
 }
 
-// ---------- Начальное состояние формы -------------
 const emptyForm: Omit<Transaction, 'id' | 'remainder'> = {
   contractor: '',
   project: '',
@@ -68,16 +62,82 @@ const emptyForm: Omit<Transaction, 'id' | 'remainder'> = {
 
 const API_URL = '/api';
 
-// ---------- Функция заголовков аутентификации -------------
+type TransactionsPageProps = {
+  showError: (msg: string) => void;
+};
+
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// ---------- Пропсы страницы -------------
-type TransactionsPageProps = {
-  showError: (msg: string) => void;
-};
+/** Генерируем случайный цвет. Можно улучшить генератор по вкусу */
+function getRandomColor(): string {
+  // Например, формат "#RRGGBB"
+  const random = Math.floor(Math.random() * 16777215); // 0xFFFFFF
+  const hex = random.toString(16).padStart(6, '0');
+  return `#${hex}`;
+}
+
+/** applySort: вручную сортируем массив rows */
+function applySort(rows: Transaction[], sortField: string, direction: 'asc' | 'desc'): Transaction[] {
+  if (!sortField) return rows;
+  return [...rows].sort((a, b) => {
+    let aVal = (a as any)[sortField];
+    let bVal = (b as any)[sortField];
+
+    // сортируем даты
+    if (sortField === 'date') {
+      const parseTime = (val: string) => {
+        if (!val) return Number.MIN_SAFE_INTEGER; // или MAX_SAFE_INTEGER
+        const t = new Date(val).getTime();
+        return Number.isNaN(t) ? Number.MIN_SAFE_INTEGER : t;
+      };
+      const aTime = parseTime(aVal);
+      const bTime = parseTime(bVal);
+      return direction === 'asc' ? aTime - bTime : bTime - aTime;
+    }
+    
+
+    // сортируем числа
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      return direction === 'asc' ? aVal - bVal : bVal - aVal;
+    }
+
+    // строки
+    aVal = String(aVal ?? '');
+    bVal = String(bVal ?? '');
+    return direction === 'asc'
+      ? aVal.localeCompare(bVal)
+      : bVal.localeCompare(aVal);
+  });
+}
+
+/** Компонент-заголовок колонки с нашей кастомной стрелкой */
+function MySortableHeader(props: {
+  label: string;
+  field: string;
+  sortField: string;
+  direction: 'asc' | 'desc';
+  onToggleSort: (field: string) => void;
+}) {
+  const { label, field, sortField, direction, onToggleSort } = props;
+  const isActive = (sortField === field);
+
+  return (
+    <Box
+      onClick={() => onToggleSort(field)}
+      sx={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+    >
+      <Typography variant="body2">{label}</Typography>
+      {isActive && (
+        direction === 'asc'
+          ? <ArrowUpwardIcon sx={{ ml: 0.5, fontSize: 'inherit' }} />
+          : <ArrowDownwardIcon sx={{ ml: 0.5, fontSize: 'inherit' }} />
+      )}
+    </Box>
+  );
+}
 
 const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
   const navigate = useNavigate();
@@ -87,21 +147,40 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
   const { bgImage, themeMode } = React.useContext(ThemeContext);
   const isDark = themeMode === 'dark';
 
-  // ---------- Состояния компонента -------------
+  // Пагинация
   const [paginationModel, setPaginationModel] = React.useState<GridPaginationModel>({
     pageSize: 25,
     page: 0,
   });
+
+  // Состояние сортировки
+  const [sortField, setSortField] = React.useState<string>('date');
+  const [direction, setDirection] = React.useState<'asc' | 'desc'>('desc');
+
+  // карта: project -> color
+  const projectColorMap = React.useRef<Record<string, string>>({});
+
+  // переключаем сортировку
+  const handleToggleSort = (field: string) => {
+    if (sortField === field) {
+      setDirection(direction === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setDirection('asc');
+    }
+  };
+
+  // для редактирования
   const [editRow, setEditRow] = React.useState<Transaction | null>(null);
+  // для добавления
   const [openDrawer, setOpenDrawer] = React.useState(false);
   const [form, setForm] = React.useState(emptyForm);
+
   const [responsibleUsers, setResponsibleUsers] = React.useState<ResponsibleUser[]>([]);
 
-  // ---------- Проверка токена и загрузка списка "ответственных" -------------
   React.useEffect(() => {
     if (!localStorage.getItem('token')) {
       navigate('/login');
-      return;
     }
     const fetchResponsibleUsers = async () => {
       try {
@@ -120,7 +199,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
         }
         const data = await res.json();
         setResponsibleUsers(data);
-      } catch (err: unknown) {
+      } catch (err) {
         if (err instanceof Error) {
           showError(err.message);
         }
@@ -129,7 +208,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     fetchResponsibleUsers();
   }, [navigate, showError]);
 
-  // ---------- Запрашиваем транзакции из API -------------
+  // Запрос транзакций
   const {
     data: rows = [],
     isLoading,
@@ -153,22 +232,18 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     },
   });
 
-  // ---------- Если ошибка в запросе, показать уведомление -------------
   React.useEffect(() => {
     if (isError && error instanceof Error) {
       showError(error.message);
     }
   }, [isError, error, showError]);
 
-  // ---------- Мутации (create + update) -------------
+  // Мутации создания / обновления
   const createMutation = useMutation({
     mutationFn: async (data: Omit<Transaction, 'id'>) => {
       const res = await fetch(`${API_URL}/transactions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders(),
-        },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(data),
       });
       if (res.status === 401 || res.status === 403) {
@@ -192,10 +267,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     mutationFn: async (data: Transaction) => {
       const res = await fetch(`${API_URL}/transactions/${data.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders(),
-        },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(data),
       });
       if (res.status === 401 || res.status === 403) {
@@ -214,7 +286,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     },
   });
 
-  // ---------- Обработчики для создания -------------
+  // Открыть/закрыть Drawer
   const handleOpenDrawer = (type: OperationType) => {
     setForm({ ...emptyForm, operationType: type });
     setOpenDrawer(true);
@@ -226,17 +298,20 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     const { name, value } = e.target;
     setForm((prev) => ({
       ...prev,
-      [name]: (name === 'total' || name === 'advance' || name === 'tax') ? +value : value,
+      [name]:
+        name === 'total' || name === 'advance' || name === 'tax'
+          ? +value
+          : value,
     }));
   };
   const handleAdd = () => {
     createMutation.mutate({
       ...form,
-      remainder: form.total - form.advance, // remainder
+      remainder: form.total - form.advance,
     });
   };
 
-  // ---------- Обработчики для редактирования -------------
+  // Редактирование
   const handleEdit = (row: Transaction) => {
     setEditRow(row);
   };
@@ -244,12 +319,14 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     if (!editRow) return;
     const { name, value } = e.target;
     setEditRow((prev) =>
-      prev ? {
-        ...prev,
-        [name]: (name === 'total' || name === 'advance' || name === 'tax')
-          ? +value
-          : value,
-      } : null
+      prev
+        ? {
+            ...prev,
+            [name]: name === 'total' || name === 'advance' || name === 'tax'
+              ? +value
+              : value,
+          }
+        : null
     );
   };
   const handleSaveEdit = () => {
@@ -261,43 +338,125 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     }
   };
 
-  // ---------- Столбцы DataGrid со встроенной сортировкой «из коробки» -------------
+  // Колонки: отключаем встроенную сортировку (sortable: false),
+  // рисуем заголовки через MySortableHeader + цвет для "project"
   const columns: GridColDef<Transaction>[] = [
     {
       field: 'date',
       headerName: 'Дата',
       width: 140,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Дата"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
+      renderCell: (params) => params.value ?? '',
     },
     {
       field: 'contractor',
       headerName: 'Контрагент',
       width: 160,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Контрагент"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
     },
     {
       field: 'project',
       headerName: 'Проект',
-      width: 140,
-      sortable: true,
+      width: 180,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Проект"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
+      renderCell: (params) => {
+        const projectName = params.value as string;
+        if (!projectName) return '';
+        // ищем или создаём цвет:
+        if (!projectColorMap.current[projectName]) {
+          projectColorMap.current[projectName] = getRandomColor();
+        }
+        const bg = projectColorMap.current[projectName];
+        return (
+          <Chip
+            label={projectName}
+            sx={{
+              backgroundColor: bg,
+              color: '#fff',
+            }}
+          />
+        );
+      },
     },
     {
       field: 'section',
-      headerName: 'Задача/раздел',
+      headerName: 'Раздел',
       width: 140,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Раздел"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
     },
     {
       field: 'responsible',
       headerName: 'Ответственный',
       width: 140,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Ответственный"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
+      renderCell: (params) => {
+        // params.value — это login
+        const login = params.value as string;
+        const user = responsibleUsers.find((u) => u.login === login);
+        // Если user найден, покажем nickname, иначе fallback = login
+        return user ? user.nickname : login;
+      },
     },
+    
     {
       field: 'operationType',
       headerName: 'Тип',
       width: 100,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Тип"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
       renderCell: (params) => (
         <Chip
           label={params.value}
@@ -310,59 +469,92 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
       field: 'total',
       headerName: 'Сумма',
       width: 120,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Сумма"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
       renderCell: (params) =>
         params.value != null
-          ? params.value.toLocaleString('ru-RU', {
-              style: 'currency',
-              currency: 'RUB',
-            })
+          ? params.value.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })
           : '',
     },
     {
       field: 'advance',
       headerName: 'Аванс',
       width: 120,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Аванс"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
       renderCell: (params) =>
         params.value != null
-          ? params.value.toLocaleString('ru-RU', {
-              style: 'currency',
-              currency: 'RUB',
-            })
+          ? params.value.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })
           : '',
     },
     {
       field: 'tax',
       headerName: 'Налог',
       width: 120,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Налог"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
       renderCell: (params) =>
         params.value != null
-          ? params.value.toLocaleString('ru-RU', {
-              style: 'currency',
-              currency: 'RUB',
-            })
+          ? params.value.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })
           : '',
     },
     {
       field: 'remainder',
       headerName: 'Остаток',
       width: 120,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Остаток"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
       renderCell: (params) =>
         params.value != null
-          ? params.value.toLocaleString('ru-RU', {
-              style: 'currency',
-              currency: 'RUB',
-            })
+          ? params.value.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })
           : '',
     },
     {
       field: 'note',
       headerName: 'Примечание',
       width: 200,
-      sortable: true,
+      sortable: false,
+      renderHeader: (params) => (
+        <MySortableHeader
+          label="Примечание"
+          field={params.colDef.field}
+          sortField={sortField}
+          direction={direction}
+          onToggleSort={handleToggleSort}
+        />
+      ),
     },
     {
       field: 'actions',
@@ -370,6 +562,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
       width: 100,
       sortable: false,
       filterable: false,
+      renderHeader: () => <Typography variant="body2">Действия</Typography>,
       renderCell: (params) => (
         <IconButton onClick={() => handleEdit(params.row)}>
           <EditIcon />
@@ -378,25 +571,20 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
     },
   ];
 
-  // ---------- Начальная сортировка (date: desc) -------------
-  const initialState = {
-    sorting: {
-      sortModel: [{ field: 'date', sort: 'desc' }] as GridSortModel,
-    },
-  };
+  // Сортируем rows перед отдачей DataGrid
+  const displayedRows = applySort(rows, sortField, direction);
 
-  // ---------- JSX -------------
   return (
     <Box
       sx={{
         backgroundImage: `url("${bgImage}")`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        backgroundAttachment: 'fixed', // фон не скроллится
+        backgroundAttachment: 'fixed',
         minHeight: '100vh',
         p: 2,
         pt: 12,
-        border: isDark ? '1px solid #444' : '1px solid #ddd',
+        border: isDark ? '0px solid #444' : '0px solid #ddd',
       }}
     >
       <Box
@@ -405,7 +593,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
           backdropFilter: 'blur(4px)',
           borderRadius: 2,
           p: 2,
-          border: isDark ? '1px solid #444' : '1px solid #ddd',
+          border: isDark ? '0px solid #444' : '0px solid #ddd',
           maxWidth: '1920px',
           mx: 'auto',
           color: isDark ? '#fff' : '#000',
@@ -422,16 +610,16 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
 
         <Box sx={{ width: '100%', overflowX: 'auto' }}>
           <DataGrid<Transaction>
-            rows={rows}                     // Подаём массив напрямую, без ручной сортировки
+            rows={displayedRows}
             columns={columns}
             paginationModel={paginationModel}
             onPaginationModelChange={setPaginationModel}
-            pageSizeOptions={[25, 50, 100]}
+            pageSizeOptions={[100, 250, 500]}
             disableRowSelectionOnClick
-            slots={{ toolbar: GridToolbar }} // Показываем тулбар
+            slots={{ toolbar: GridToolbar }}
             loading={isLoading}
-            initialState={initialState}      // Дата desc
-            // ВАЖНО: не указываем sortingMode="server", onSortModelChange и т.п.
+            // Указываем sortingMode="server", чтобы DataGrid не пытался сам сортировать
+            sortingMode="server"
             sx={{
               '--DataGrid-rowBorderColor': isDark ? '#444' : '#ddd',
               borderColor: isDark ? '#444' : '#ddd',
@@ -443,66 +631,37 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
                   ? 'rgba(0,0,0,0.8) !important'
                   : 'rgba(255,255,255,0.8) !important',
                 color: isDark ? '#fff !important' : '#000 !important',
-                boxShadow: isDark
-                  ? `0px 1px 0px 0px var(--DataGrid-rowBorderColor) !important`
-                  : undefined,
               },
-              '& .MuiDataGrid-toolbarContainer': {
+              '& .MuiDataGrid-container--top[role="row"], & .MuiDataGrid-container--bottom[role="row"]': {
+                background: 'var(--DataGrid-containerBackground) !important',
+              },
+                  // И добиваемся, чтобы row действительно взял этот фон
+              '& .MuiDataGrid-container--top[role="presentation"] [role="row"]': {
                 backgroundColor: isDark
-                  ? 'rgba(0,0,0,0.8) !important'
+                  ? 'rgba(30,30,30,0.9) !important'
                   : 'rgba(255,255,255,0.8) !important',
-                color: isDark ? '#fff !important' : '#000 !important',
-              },
-              '& .MuiDataGrid-cell': {
-                color: isDark ? '#fff !important' : '#000 !important',
-              },
-              '& .MuiDataGrid-row--borderBottom': {
-                backgroundColor: isDark
-                  ? 'rgba(0,0,0,0.8) !important'
-                  : 'rgba(255,255,255,0.8) !important',
-                color: isDark ? '#fff !important' : '#000 !important',
-                boxShadow: isDark
-                  ? `0px 1px 0px 0px var(--DataGrid-rowBorderColor) !important`
-                  : undefined,
-                pointerEvents: 'none',
               },
               '& .MuiTablePagination-toolbar': {
-                backgroundColor: isDark
-                  ? 'rgba(0,0,0,0.8) !important'
-                  : 'rgba(255,255,255,0.8) !important',
-                color: isDark ? '#fff !important' : '#000 !important',
-              },
-              '& .MuiBox-root.css-1fupizq': {
-                backgroundColor: isDark ? 'rgba(0,0,0,0.8) !important' : undefined,
-                color: isDark ? '#fff !important' : undefined,
-              },
-              '& .MuiDataGrid-virtualScrollerRenderZone.css-1vouojk': {
-                backgroundColor: isDark ? 'rgba(0,0,0,0.8) !important' : undefined,
-                color: isDark ? '#fff !important' : undefined,
-                boxShadow: isDark
-                  ? `0px 1px 0px 0px var(--DataGrid-rowBorderColor) !important`
-                  : undefined,
-              },
-              '& .MuiDataGrid-virtualScroller': {
-                '&::-webkit-scrollbar': { width: '8px', height: '8px' },
-                '&::-webkit-scrollbar-track': {
-                  background: isDark ? '#333' : '#f1f1f1',
-                },
-                '&::-webkit-scrollbar-thumb': {
-                  background: isDark ? '#555' : '#aaa',
-                  borderRadius: '4px',
-                },
-                '&::-webkit-scrollbar-thumb:hover': {
-                  background: isDark ? '#777' : '#888',
-                },
-              },
+        color: '#fff !important',
+      },
+      // Если нужно поправить цвет и для select / label
+      '& .MuiTablePagination-selectLabel, .MuiTablePagination-displayedRows': {
+        color: '#fff !important',
+      },
+      // А если надо и сам select "Rows per page"
+      '& .MuiTablePagination-select': {
+        color: '#fff !important',
+      },
+              
+
+              // ... прочие стили ...
             }}
           />
         </Box>
 
-        {/* Drawer для добавления новой транзакции */}
+        {/* Drawer для создания */}
         <Drawer anchor="right" open={openDrawer} onClose={handleCloseDrawer}>
-          <Box sx={{ width: isMobile ? '100%' : 400, p: 2 }}>
+          <Box sx={{ width: isMobile ? '100%' : 400, p: 2, pt: 10 }}>
             <Typography variant="h6" sx={{ mb: 2 }}>
               Добавить {form.operationType === 'Доход' ? 'приход' : 'расход'}
             </Typography>
@@ -587,7 +746,7 @@ const TransactionsPage: React.FC<TransactionsPageProps> = ({ showError }) => {
           </Box>
         </Drawer>
 
-        {/* Диалог для редактирования существующей строки */}
+        {/* Диалог редактирования */}
         {editRow && (
           <Dialog open={Boolean(editRow)} onClose={() => setEditRow(null)}>
             <DialogTitle>Редактировать транзакцию</DialogTitle>
