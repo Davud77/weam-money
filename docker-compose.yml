@@ -1,0 +1,48 @@
+services:
+  weam-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: weam-app
+
+    ports:
+      - "4000:4000"
+
+    # Вся БД и WAL/SHM живут в /data (rw), даже при read_only: true
+    volumes:
+      - ./data:/data:rw
+
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      PORT: 4000
+      DATABASE_FILE: /data/database.sqlite
+      CLIENT_ORIGINS: ${CLIENT_ORIGINS}
+      JWT_SECRET: ${JWT_SECRET}
+      ACCESS_COOKIE_NAME: ${ACCESS_COOKIE_NAME}
+      REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME}
+      COOKIE_SECURE: ${COOKIE_SECURE}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE}
+      ENABLE_HSTS: ${ENABLE_HSTS}
+      CSP_UPGRADE_INSECURE: ${CSP_UPGRADE_INSECURE}
+
+    security_opt:
+      - no-new-privileges:true
+
+    # Корневая ФС read-only: приложение пишет только в /data и /tmp
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # Запускаем под непривилегированным пользователем (uid/gid=1000)
+    user: "1000:1000"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/api/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 20s

@@ -1,0 +1,20 @@
+# общие
+.git
+.gitignore
+*.log
+**/.DS_Store
+
+# не тащим локальные node_modules
+node_modules
+**/node_modules
+
+# кэш/артефакты фронта
+dist
+build
+
+# локальные данные и БД — их монтируем как volume
+data
+
+# IDE
+.vscode
+.idea
