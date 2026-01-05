@@ -4,11 +4,11 @@
 /**
  * routes.js (modular, hardened)
  * ctx = {
- *   db, dbAsync,
- *   utils: { respond, respondError, isNonEmptyStr, clampStr, toIntOrNull, parseList, clampDateStr, clampProgress, ttlToMs },
- *   auth: { auth: authRequired, adminOnly, whereByRole, signAccessToken, signRefreshToken, verifyRefresh },
- *   limiters: { loginLimiter },
- *   config
+ * db, dbAsync,
+ * utils: { respond, respondError, isNonEmptyStr, clampStr, toIntOrNull, parseList, clampDateStr, clampProgress, ttlToMs },
+ * auth: { auth: authRequired, adminOnly, whereByRole, signAccessToken, signRefreshToken, verifyRefresh },
+ * limiters: { loginLimiter },
+ * config
  * }
  */
 
@@ -191,9 +191,54 @@ function registerRoutes(app, ctx) {
       (err, rows) => err ? respondError(res, 500, 'DB error') : respond(res, rows || []));
   });
 
-  // Создание/удаление пользователей — закрыто политикой (при необходимости можно включить)
-  app.post('/api/users', authRequired(true), adminOnly, methodNotAllowed());
-  app.delete('/api/users/:id', authRequired(true), adminOnly, methodNotAllowed());
+  // Создание нового пользователя (только Admin)
+  app.post('/api/users', authRequired(true), adminOnly, async (req, res) => {
+    try {
+      const { login, password, type, nickname } = req.body || {};
+
+      if (!isNonEmptyStr(login) || !isNonEmptyStr(password)) {
+        return respondError(res, 400, 'Login and password are required');
+      }
+
+      // Хеширование пароля
+      const bcrypt = require('bcryptjs');
+      const hash = bcrypt.hashSync(String(password), 10);
+      const role = (type === 'admin') ? 'admin' : 'user';
+
+      const r = await dbAsync.run(
+        `INSERT INTO users (login, password_hash, role, nickname) VALUES (?, ?, ?, ?)`,
+        [clampStr(login), hash, role, clampStr(nickname)]
+      );
+
+      respond(res, {
+        id: r.lastID,
+        login: clampStr(login),
+        role,
+        nickname: clampStr(nickname)
+      }, 201);
+    } catch (e) {
+      if (String(e.message).includes('UNIQUE constraint failed')) {
+        return respondError(res, 409, 'User with this login already exists');
+      }
+      safeSqlError(res, e);
+    }
+  });
+
+  // Удаление пользователя (только Admin)
+  app.delete('/api/users/:id', authRequired(true), adminOnly, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return respondError(res, 400, 'Invalid id');
+
+      // Нельзя удалить самого себя
+      if (req.user.userId === id) {
+        return respondError(res, 400, 'Cannot delete yourself');
+      }
+
+      const r = await dbAsync.run(`DELETE FROM users WHERE id = ?`, [id]);
+      respond(res, { deleted: r.changes > 0 });
+    } catch (e) { safeSqlError(res, e); }
+  });
 
   // Смена пароля (админ)
   app.put('/api/users/:id/password', authRequired(true), adminOnly, async (req, res) => {

@@ -1,31 +1,14 @@
-// src/pages/UsersPage.tsx
-/* -------------------------------------------------------------------------- */
-/*  UsersPage — DataGrid в стиле TransactionsPage (унифицированное оформление)*/
-/*  Правила доступа (UI):                                                     */
-/*    • admin  → видит всех, может создавать/редактировать/удалять           */
-/*    • user   → видит только себя, без действий и без диалогов               */
-/*  Итоговое решение о правах — на бэкенде (RBAC, 403/405)                    */
-/* -------------------------------------------------------------------------- */
 import React, { useMemo, useState } from 'react';
-import {
-  Box,
-  Typography,
-  Button,
-  TextField,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  useTheme,
-  useMediaQuery,
-  MenuItem,
-  Stack,
-} from '@mui/material';
-import { DataGrid, GridColDef } from '@mui/x-data-grid';
-import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { 
+  Pencil, 
+  Trash2, 
+  Search, 
+  Plus, 
+  X, 
+  ShieldAlert, 
+  User as UserIcon 
+} from 'lucide-react';
 import { api, me } from '../lib/api';
 
 /* --------------------------------- Types ---------------------------------- */
@@ -53,10 +36,8 @@ const emptyForm: UserForm = { login: '', password: '', type: 'user', nickname: '
 /* --------------------------------- Page ----------------------------------- */
 const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
   const qc = useQueryClient();
-  const theme = useTheme();
-  const mobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  /* Кто я — только с сервера */
+  /* Кто я — запрос к API */
   const { data: meData, isFetching: meFetching } = useQuery({
     queryKey: ['me'],
     queryFn: () => me(),
@@ -75,12 +56,10 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
   const [newPassword, setNewPassword] = useState('');
   const [search, setSearch]           = useState('');
 
-  /* Данные:
-     - admin → /api/users (все)
-     - user  → только сам (на основе /api/me) */
-  const { data: users = [], isLoading, isError, error } = useQuery<User[]>({
+  /* Загрузка пользователей */
+  const { data: users = [], isLoading } = useQuery<User[]>({
     queryKey: ['users', isAdmin ? 'all' : 'self'],
-    enabled: !!meData, // ждём /api/me
+    enabled: !!meData,
     queryFn: async () => {
       if (isAdmin) {
         const raw = await api<Array<{ id: number; login: string; role: 'admin' | 'user'; nickname?: string | null }>>(
@@ -93,7 +72,7 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
           nickname: u.nickname || '',
         }));
       }
-      // user → только сам
+      // Если не админ — показываем только себя
       const u = meData?.user;
       if (!u) return [];
       return [{ id: u.id, login: u.login, type: (u.role as any) || 'user', nickname: (u as any).nickname || '' }];
@@ -102,39 +81,25 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
     refetchOnWindowFocus: false,
   });
 
-  React.useEffect(() => {
-    if (isError && error instanceof Error) showError(error.message);
-  }, [isError, error, showError]);
-
-  /* ---------------------------- Mutations (admin) ------------------------- */
+  /* ---------------------------- Mutations ------------------------- */
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['users'] });
   };
 
-  // Создание
   const create = useMutation({
     mutationFn: (u: UserForm) =>
-      api(`${API_URL}/users`, {
-        method: 'POST',
-        body: JSON.stringify(u),
-      }),
+      api(`${API_URL}/users`, { method: 'POST', body: JSON.stringify(u) }),
     onSuccess: () => {
       invalidate();
       setCreateOpen(false);
       setForm(emptyForm);
     },
-    onError: (e: unknown) =>
-      e instanceof Error && e.message !== 'UNAUTHORIZED' && e.message !== 'Недостаточно прав' && showError(e.message),
-    retry: 0,
+    onError: (e: any) => showError(e.message || 'Ошибка создания'),
   });
 
-  // Обновление карточки пользователя
   const update = useMutation({
     mutationFn: (u: User) =>
-      api(`${API_URL}/users/${u.id}`, {
-        method: 'PUT',
-        body: JSON.stringify(u),
-      }),
+      api(`${API_URL}/users/${u.id}`, { method: 'PUT', body: JSON.stringify(u) }),
     onSuccess: (_, usr) => {
       if (!newPassword) {
         setEditUser(null);
@@ -143,12 +108,9 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
         changePass.mutate({ id: (usr as any).id, pwd: newPassword });
       }
     },
-    onError: (e: unknown) =>
-      e instanceof Error && e.message !== 'UNAUTHORIZED' && e.message !== 'Недостаточно прав' && showError(e.message),
-    retry: 0,
+    onError: (e: any) => showError(e.message || 'Ошибка обновления'),
   });
 
-  // Смена пароля
   const changePass = useMutation({
     mutationFn: ({ id, pwd }: { id: number; pwd: string }) =>
       api(`${API_URL}/users/${id}/password`, {
@@ -160,35 +122,28 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
       setEditUser(null);
       invalidate();
     },
-    onError: (e: unknown) =>
-      e instanceof Error && e.message !== 'UNAUTHORIZED' && e.message !== 'Недостаточно прав' && showError(e.message),
-    retry: 0,
+    onError: (e: any) => showError(e.message || 'Ошибка смены пароля'),
   });
 
-  // Удаление
   const remove = useMutation({
-    mutationFn: (id: number) =>
-      api(`${API_URL}/users/${id}`, {
-        method: 'DELETE',
-      }),
+    mutationFn: (id: number) => api(`${API_URL}/users/${id}`, { method: 'DELETE' }),
     onSuccess: () => invalidate(),
-    onError: (e: unknown) =>
-      e instanceof Error && e.message !== 'UNAUTHORIZED' && e.message !== 'Недостаточно прав' && showError(e.message),
-    retry: 0,
+    onError: (e: any) => showError(e.message || 'Ошибка удаления'),
   });
 
   /* ------------------------------- Handlers ------------------------------- */
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   };
-  const handleEditChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  
+  const handleEditChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     if (!editUser) return;
     const { name, value } = e.target;
     setEditUser({ ...editUser, [name]: value } as User);
   };
 
-  /* ------------------------------ Rows/Columns ---------------------------- */
+  /* ------------------------------ Rows Filter ---------------------------- */
   const rows = useMemo(() => {
     const base = users;
     const q = search.trim().toLowerCase();
@@ -201,228 +156,214 @@ const UsersPage: React.FC<UsersPageProps> = ({ showError }) => {
             u.type.toLowerCase().includes(q),
         )
       : base;
-    // Для подстраховки: если не admin — показываем только себя
     return isAdmin ? filtered : filtered.filter((u) => u.login === myLogin);
   }, [users, search, isAdmin, myLogin]);
 
-  const baseColumns: GridColDef<User>[] = [
-    { field: 'id', headerName: 'ID', width: 90, align: 'center', headerAlign: 'center' },
-    {
-      field: 'login',
-      headerName: 'Логин',
-      flex: 1.2,
-      renderCell: (p) => (
-        <Typography variant="body2" className="t-primary t-strong">
-          {p.value}
-        </Typography>
-      ),
-    },
-    {
-      field: 'type',
-      headerName: 'Тип',
-      width: 130,
-      align: 'center',
-      headerAlign: 'center',
-      sortable: true,
-      renderCell: (p) => {
-        const v = (p.value as User['type']) || 'user';
-        return (
-          <Typography
-            variant="body2"
-            className={`users-type ${v === 'admin' ? 'users-type--admin' : 'users-type--user'}`}
-          >
-            {v}
-          </Typography>
-        );
-      },
-    },
-    {
-      field: 'nickname',
-      headerName: 'Никнейм',
-      flex: 1,
-      renderCell: (p) => <Typography variant="body2" className="t-primary">{p.value || '—'}</Typography>,
-    },
-  ];
-
-  const actionCol: GridColDef<User> = {
-    field: 'actions',
-    headerName: 'Действ.',
-    width: 100,
-    sortable: false,
-    filterable: false,
-    disableExport: true as any,
-    align: 'center',
-    headerAlign: 'center',
-    renderCell: (p) => {
-      const row = p.row as User;
-      return (
-        <Stack direction="row" spacing={0.5}>
-          <IconButton
-            size="small"
-            onClick={() => setEditUser(row)}
-            aria-label="edit"
-            className="icon-edit"
-          >
-            <EditIcon fontSize="small" />
-          </IconButton>
-          <IconButton
-            size="small"
-            aria-label="delete"
-            disabled={row.login === myLogin}
-            onClick={() => {
-              if (window.confirm(`Удалить пользователя "${row.login}"?`)) {
-                remove.mutate(row.id);
-              }
-            }}
-            className="users-delete-btn"
-          >
-            <DeleteIcon fontSize="small" />
-          </IconButton>
-        </Stack>
-      );
-    },
-  };
-
-  const columns = useMemo<GridColDef<User>[]>(() => {
-    // Для обычного пользователя — без колонки действий
-    return isAdmin ? [...baseColumns, actionCol] : baseColumns;
-  }, [isAdmin, myLogin, remove]); // deps для корректной перерисовки actionCol
-
   /* --------------------------------- Render -------------------------------- */
   return (
-    <Box className="root users-root users-page transactions-page">
-      {/* Шапка — универсальные классы */}
-      <Box className="header users-header">
-        <Typography variant="h6" className="title users-title">
-          Пользователи
-        </Typography>
-
-        <Stack direction="row" spacing={1} className="actions header-actions" alignItems="center">
-          <TextField
-            size="small"
-            placeholder="Поиск…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="search users-search"
-          />
+    <div className="page-container">
+      {/* Шапка */}
+      <div className="header">
+        <h2 className="text-xl font-bold m-0">Пользователи</h2>
+        
+        <div className="actions-block">
+          
+          
           {isAdmin && (
-            <Button
-              variant="contained"
-              size="small"
-              className="bluebutton tiny-btn"
-              onClick={() => setCreateOpen(true)}
-            >
-              Добавить пользователя
-            </Button>
+            <button className="btn" onClick={() => setCreateOpen(true)}>
+              <Plus size={18} /> 
+              <div className="unset">Добавить</div>
+            </button>
           )}
-        </Stack>
-      </Box>
 
-      {/* Контент */}
-      <Box className="content users-content filters-section">
-        <Box className="grid-wrapper">
-          <DataGrid
-            rows={rows}
-            columns={columns}
-            getRowId={(r) => r.id}
-            loading={isLoading || meFetching}
-            initialState={{ pagination: { paginationModel: { pageSize: 100 } } }}
-            pageSizeOptions={[100, 250, 500]}
-            disableRowSelectionOnClick
-            density="compact"
-            className="transactions-grid grid--dark-head"
-            getRowHeight={() => 'auto'}
-          />
-        </Box>
-      </Box>
 
-      {/* Диалог — добавление (только admin) */}
-      {isAdmin && (
-        <Dialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-          fullWidth
-          maxWidth={mobile ? 'sm' : 'md'}
-          PaperProps={{ className: 'dialog-paper' }}
-        >
-          <DialogTitle className="with-bottom-border">Добавить пользователя</DialogTitle>
-          <DialogContent dividers>
-            <Box className="chip-grid">
-              <TextField label="Логин"    name="login"    value={form.login}    onChange={handleChange} className="users-field" />
-              <TextField label="Пароль"   name="password" type="password" value={form.password} onChange={handleChange} className="users-field" />
-              <TextField select label="Тип" name="type" value={form.type} onChange={handleChange} className="users-field">
-                <MenuItem value="user">user</MenuItem>
-                <MenuItem value="admin">admin</MenuItem>
-              </TextField>
-              <TextField label="Никнейм" name="nickname" value={form.nickname} onChange={handleChange} className="users-field" />
-            </Box>
-          </DialogContent>
-          <DialogActions className="with-top-border">
-            <Button onClick={() => setCreateOpen(false)} className="btn-text-no-transform">
-              Отмена
-            </Button>
-            <Button variant="contained" onClick={() => create.mutate(form)} className="bluebutton">
-              Добавить
-            </Button>
-          </DialogActions>
-        </Dialog>
+          <div className="relative">
+            <input 
+              className="input" 
+              placeholder="Поиск..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Таблица */}
+      <div className="content">
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table w-full block">
+            <thead>
+              <tr>
+                <th style={{ width: 60 }}>ID</th>
+                <th style={{ textAlign: 'left' }}>Логин</th>
+                <th style={{ textAlign: 'center', width: 100 }}>Роль</th>
+                <th style={{ textAlign: 'left' }}>Никнейм</th>
+                {isAdmin && <th style={{ width: 100, textAlign: 'center' }}>Действия</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading || meFetching ? (
+                <tr>
+                  <td colSpan={isAdmin ? 5 : 4} className="p-4 text-center text-soft">
+                    Загрузка...
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={isAdmin ? 5 : 4} className="p-4 text-center text-soft">
+                    Нет пользователей
+                  </td>
+                </tr>
+              ) : (
+                rows.map((user) => (
+                  <tr key={user.id} className="hover:bg-sidebar">
+                    <td style={{ textAlign: 'center' }} className="text-soft">{user.id}</td>
+                    <td className="font-medium">{user.login}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span className={`badge ${user.type === 'admin' ? 'badge-danger' : 'badge-primary'}`}>
+                        {user.type === 'admin' ? <ShieldAlert size={12} className="mr-1" /> : <UserIcon size={12} className="mr-1" />}
+                        {user.type}
+                      </span>
+                    </td>
+                    <td className="text-soft">{user.nickname || '—'}</td>
+                    {isAdmin && (
+                      <td style={{ textAlign: 'center' }}>
+                        <div className="flex justify-center gap-1">
+                          <button 
+                            className="icon-btn" 
+                            onClick={() => setEditUser(user)}
+                            title="Редактировать"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          
+                          {user.login !== myLogin && (
+                            <button 
+                              className="icon-btn danger"
+                              onClick={() => {
+                                if (window.confirm(`Удалить пользователя "${user.login}"?`)) {
+                                  remove.mutate(user.id);
+                                }
+                              }}
+                              title="Удалить"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Модалка создания */}
+      {createOpen && (
+        <div className="modal-overlay" onClick={() => setCreateOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Добавить пользователя</h3>
+              <button className="icon-btn" onClick={() => setCreateOpen(false)}><X size={20}/></button>
+            </div>
+            
+            <div className="modal-body flex-col">
+              <div className="input-group">
+                <label className="input-label">Логин</label>
+                <input className="input" name="login" value={form.login} onChange={handleChange} />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Пароль</label>
+                <input className="input" type="password" name="password" value={form.password} onChange={handleChange} />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Тип</label>
+                <select className="input" name="type" value={form.type} onChange={handleChange}>
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="input-group">
+                <label className="input-label">Никнейм</label>
+                <input className="input" name="nickname" value={form.nickname} onChange={handleChange} />
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn secondary" onClick={() => setCreateOpen(false)}>Отмена</button>
+              <button className="btn" onClick={() => create.mutate(form)}>Создать</button>
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Диалог — редактирование (только admin) */}
-      {isAdmin && editUser && (
-        <Dialog
-          open
-          onClose={() => setEditUser(null)}
-          fullWidth
-          maxWidth={mobile ? 'sm' : 'md'}
-          PaperProps={{ className: 'dialog-paper' }}
-        >
-          <DialogTitle className="with-bottom-border">Редактировать пользователя</DialogTitle>
-          <DialogContent dividers>
-            <Box className="chip-grid">
-              <TextField label="Логин" name="login" value={editUser.login} onChange={handleEditChange} className="users-field" />
-              <TextField select label="Тип" name="type" value={editUser.type} onChange={handleEditChange} className="users-field">
-                <MenuItem value="user">user</MenuItem>
-                <MenuItem value="admin">admin</MenuItem>
-              </TextField>
-              <TextField label="Никнейм" name="nickname" value={editUser.nickname} onChange={handleEditChange} className="users-field" />
-              <TextField
-                label="Новый пароль (опционально)"
-                name="newPassword"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="users-field"
-              />
-            </Box>
-          </DialogContent>
-          <DialogActions className="with-top-border users-dialog-actions">
-            {editUser.login !== myLogin && (
-              <Button
-                color="error"
-                startIcon={<DeleteIcon />}
-                onClick={() => {
-                  if (window.confirm(`Удалить пользователя "${editUser.login}"?`)) {
-                    remove.mutate(editUser.id);
-                    setEditUser(null);
-                  }
-                }}
-                className="btn-text-no-transform"
-              >
-                Удалить
-              </Button>
-            )}
-            <Box className="flex-grow" />
-            <Button onClick={() => setEditUser(null)} className="btn-text-no-transform">
-              Отмена
-            </Button>
-            <Button variant="contained" onClick={() => update.mutate(editUser!)} className="bluebutton">
-              Сохранить
-            </Button>
-          </DialogActions>
-        </Dialog>
+      {/* Модалка редактирования */}
+      {editUser && (
+        <div className="modal-overlay" onClick={() => setEditUser(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Редактировать {editUser.login}</h3>
+              <button className="icon-btn" onClick={() => setEditUser(null)}><X size={20}/></button>
+            </div>
+            
+            <div className="modal-body flex-col">
+              <div className="input-group">
+                <label className="input-label">Логин</label>
+                <input className="input" name="login" value={editUser.login} onChange={handleEditChange} />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Тип</label>
+                <select className="input" name="type" value={editUser.type} onChange={handleEditChange as any}>
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="input-group">
+                <label className="input-label">Никнейм</label>
+                <input className="input" name="nickname" value={editUser.nickname} onChange={handleEditChange} />
+              </div>
+              
+              <hr style={{ borderColor: 'var(--border)', margin: '10px 0' }} />
+              
+              <div className="input-group">
+                <label className="input-label">Новый пароль (если нужно сменить)</label>
+                <input 
+                  className="input" 
+                  type="password" 
+                  placeholder="Оставьте пустым, чтобы не менять"
+                  value={newPassword} 
+                  onChange={(e) => setNewPassword(e.target.value)} 
+                />
+              </div>
+            </div>
+
+            <div className="modal-footer justify-between">
+              {editUser.login !== myLogin ? (
+                <button 
+                  className="btn danger" 
+                  onClick={() => {
+                    if (window.confirm(`Удалить "${editUser.login}"?`)) {
+                      remove.mutate(editUser.id);
+                      setEditUser(null);
+                    }
+                  }}
+                >
+                  Удалить
+                </button>
+              ) : <div />}
+              
+              <div className="flex">
+                <button className="btn secondary mr-2" onClick={() => setEditUser(null)}>Отмена</button>
+                <button className="btn" onClick={() => update.mutate(editUser)}>Сохранить</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
-    </Box>
+    </div>
   );
 };
 

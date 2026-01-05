@@ -1,32 +1,21 @@
-// src/pages/ProjectsPage.tsx
 import React, { useMemo, useState, useCallback } from 'react';
-import {
-  Box,
-  Typography,
-  Paper,
-  Stack,
-  Button,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  IconButton,
-  Collapse,
-} from '@mui/material';
-import Autocomplete from '@mui/material/Autocomplete';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import PercentIcon from '@mui/icons-material/Percent';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-// Импортируем новые иконки для доходов и расходов
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
-
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { 
+  FolderOpen, 
+  TrendingUp, 
+  TrendingDown, 
+  PieChart, 
+  ChevronDown, 
+  ChevronRight, 
+  Plus, 
+  X 
+} from 'lucide-react';
+
 import { api, me } from '../lib/api';
 import { fmtMoney } from '../lib/format';
 
+/* --------------------------------- Types ---------------------------------- */
 type ProjectRow = {
   id: number;
   contractor: string;
@@ -37,11 +26,10 @@ type ProjectRow = {
   progress: number;
   responsible?: string | number | null;
   responsible_nickname?: string;
-  name?: string; // slug проекта
-  remainder_calc?: number; // <-- Добавлено поле остатка
+  name?: string; // slug
+  remainder_calc?: number;
 };
 
-// Обновленный тип для группы
 type ProjectGroup = {
   contractor: string;
   projects: Array<{
@@ -118,7 +106,7 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
     return Array.from(new Set(base)).sort((a, b) => collator.compare(a ?? '', b ?? ''));
   }, [organizations, projects, collator]);
 
-  // --- ОБНОВЛЕННАЯ ЛОГИКА ГРУППИРОВКИ ---
+  // --- ГРУППИРОВКА (как было) ---
   const grouped = useMemo<ProjectGroup[]>(() => {
     const byContractor = new Map<string, Map<string, ProjectRow[]>>();
     for (const r of projects) {
@@ -133,11 +121,9 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
         contractor,
         projects: Array.from(projMap.entries()).map(([project, sections]) => {
           
-          // Фильтруем разделы по направлениям
           const incomeSections = sections.filter((x) => (x.direction || '').toLowerCase() === 'нам должны');
           const expenseSections = sections.filter((x) => (x.direction || '').toLowerCase() === 'мы должны');
 
-          // Считаем суммы: Договор и Остаток
           const incomeTotal = incomeSections.reduce((s, x) => s + (Number(x.amount) || 0), 0);
           const incomeRemainder = incomeSections.reduce((s, x) => s + (Number(x.remainder_calc) || 0), 0);
 
@@ -184,7 +170,7 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
     }
   };
 
-  /* -------------------- Диалог создания (без изменений) -------------------- */
+  /* -------------------- Создание проекта -------------------- */
   const [dlgOpen, setDlgOpen] = useState(false);
   const [newContractor, setNewContractor] = useState('');
   const [newProject, setNewProject] = useState('');
@@ -193,6 +179,7 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
   const createProject = useCallback(
     async (payload: { contractor: string; project: string }) => {
       const contractorName = payload.contractor.trim();
+      // Если такого нет — создаем организацию
       const exists = contractorOptions.some((name) => equalsCI(name, contractorName));
       if (!exists) {
         await api(`${API}/organizations`, {
@@ -206,10 +193,6 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
         section: '',
         direction: '',
         amount: 0,
-        note: '',
-        start: '',
-        end: '',
-        responsible: null,
         status: '',
         progress: 0,
       };
@@ -221,11 +204,7 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
     [contractorOptions]
   );
 
-  const addMutation = useMutation<
-    { insertedID: number; name?: string },
-    any,
-    { contractor: string; project: string }
-  >({
+  const addMutation = useMutation({
     mutationFn: createProject,
     onSuccess: async (ret, vars) => {
       setDlgOpen(false);
@@ -242,207 +221,176 @@ const ProjectsPage: React.FC<Props> = ({ showError }) => {
         showError(e?.message || 'Не удалось создать проект');
       }
     },
-    retry: 0,
   });
 
-  /* -------------------- UI -------------------- */
+  /* -------------------- State для сворачивания групп -------------------- */
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const toggleGroup = (contractor: string) =>
     setCollapsed((prev) => ({ ...prev, [contractor]: !prev[contractor] }));
 
   return (
-    <Box className="root projects-root projects-page">
-      <Box className="header projects-header">
-        <Typography variant="h6" className="title projects-title">
-          Проекты
-        </Typography>
-
-        <Stack direction="row" spacing={1} alignItems="center" className="actions header-actions">
-          {isAdmin && (
-            <Button className="bluebutton tiny-btn" size="small" onClick={() => setDlgOpen(true)}>
-              Добавить проект
-            </Button>
-          )}
-        </Stack>
-      </Box>
-
-      <Box className="content projects-content">
-        {isLoading ? (
-          <Typography className="t-secondary">Загрузка…</Typography>
-        ) : grouped.length === 0 ? (
-          <Typography className="t-secondary">Данных нет.</Typography>
-        ) : (
-          <div className="groups">
-            {grouped.map((grp) => {
-              const isCollapsed = !!collapsed[grp.contractor];
-              return (
-                <Paper key={grp.contractor} elevation={0} className="contractor-card bg-surface2">
-                  <Stack direction="row" spacing={1} alignItems="center" className="contractor-header">
-                    <IconButton
-                      size="small"
-                      onClick={() => toggleGroup(grp.contractor)}
-                      aria-label={isCollapsed ? 'Развернуть' : 'Свернуть'}
-                    >
-                      <ExpandMoreIcon className={`toggle-icon ${isCollapsed ? 'is-collapsed' : ''}`} fontSize="small" />
-                    </IconButton>
-
-                    <Typography variant="h6" className="contractor-title">
-                      {grp.contractor}
-                    </Typography>
-                    <Typography variant="caption" className="contractor-count">
-                      {grp.projects.length} проект(а)
-                    </Typography>
-                  </Stack>
-
-                  <Collapse in={!isCollapsed} timeout="auto" unmountOnExit>
-                    <Box className="project-grid">
-                      {grp.projects
-                        .sort((a, b) => collator.compare(a.project ?? '', b.project ?? ''))
-                        .map((p) => (
-                          <Paper
-                            key={p.name || p.project}
-                            variant="outlined"
-                            className="project-card bg-surface"
-                            onClick={() => openProjectByName(p.name, grp.contractor, p.project)}
-                          >
-                            <Stack spacing={1}>
-                              <Stack direction="row" spacing={1} alignItems="center">
-                                <FolderOpenIcon fontSize="small" />
-                                <Typography variant="subtitle1" className="project-title t-strong" noWrap>
-                                  {p.project || 'Без проекта'}
-                                </Typography>
-                              </Stack>
-
-                              {/* --- НОВЫЙ БЛОК С ФИНАНСАМИ --- */}
-                              <Stack spacing={0.5} sx={{ mt: 1, mb: 1 }}>
-                                {/* ДОХОДЫ (Зеленые) */}
-                                {(p.incomeTotal > 0 || p.incomeRemainder !== 0) && (
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <TrendingUpIcon fontSize="small" color="success" />
-                                    <Stack direction="row" spacing={0.5} alignItems="baseline">
-                                      <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 'bold' }}>
-                                        + {fmtMoney(p.incomeTotal)}
-                                      </Typography>
-                                      <Typography variant="caption" sx={{ color: 'text.secondary', opacity: 0.8 }}>
-                                        / {fmtMoney(p.incomeRemainder)}
-                                      </Typography>
-                                    </Stack>
-                                  </Stack>
-                                )}
-
-                                {/* РАСХОДЫ (Красные) */}
-                                {(p.expenseTotal > 0 || p.expenseRemainder !== 0) && (
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <TrendingDownIcon fontSize="small" color="error" />
-                                    <Stack direction="row" spacing={0.5} alignItems="baseline">
-                                      <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 'bold' }}>
-                                        - {fmtMoney(p.expenseTotal)}
-                                      </Typography>
-                                      <Typography variant="caption" sx={{ color: 'text.secondary', opacity: 0.8 }}>
-                                        / {fmtMoney(p.expenseRemainder)}
-                                      </Typography>
-                                    </Stack>
-                                  </Stack>
-                                )}
-                                
-                                {/* Если вообще нет денег */}
-                                {p.incomeTotal === 0 && p.expenseTotal === 0 && (
-                                    <Typography variant="caption" color="text.secondary" sx={{pl: '30px'}}>Нет сумм по договору</Typography>
-                                )}
-                              </Stack>
-                              {/* ----------------------------- */}
-
-                              <Stack direction="row" spacing={1} alignItems="center">
-                                <PercentIcon />
-                                <Typography variant="body2" className="body-text">
-                                  Готовность: <b>{p.avgProgress.toFixed(1)}%</b>
-                                </Typography>
-                              </Stack>
-                            </Stack>
-                          </Paper>
-                        ))}
-                    </Box>
-                  </Collapse>
-                </Paper>
-              );
-            })}
+    <div className="page-container">
+      {/* Header */}
+      <div className="header">
+        <h2 className="header_block">Проекты</h2>
+        
+        {isAdmin && (
+          <div className="actions-block">
+            <button className="btn" onClick={() => setDlgOpen(true)}>
+              <Plus size={18}/>
+              <div className="unset"> Добавить проект</div> 
+            </button>
           </div>
         )}
-      </Box>
+      </div>
 
-      {/* Диалог создания */}
-      {isAdmin && (
-        <Dialog
-          open={dlgOpen}
-          onClose={() => setDlgOpen(false)}
-          fullWidth
-          maxWidth="sm"
-          PaperProps={{ className: 'dialog-paper' }}
-        >
-          <DialogTitle>Новый проект</DialogTitle>
-          <DialogContent className="dialog-content--compact">
-            <Stack spacing={2} className="mt-1">
-              <Autocomplete
-                freeSolo
-                options={contractorOptions}
-                value={newContractor}
-                inputValue={newContractor}
-                onInputChange={(_, v) => setNewContractor(v)}
-                onChange={(_, v) => setNewContractor(typeof v === 'string' ? v : v ?? '')}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Контрагент (выберите или введите)"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && canSave && !addMutation.isPending) {
-                        e.preventDefault();
-                        addMutation.mutate({
-                          contractor: newContractor.trim(),
-                          project: newProject.trim(),
-                        });
-                      }
-                    }}
-                    fullWidth
-                    className="dark-input"
-                  />
+      {/* Content */}
+      <div className="content" style={{ gap: '16px' }}>
+        {isLoading ? (
+          <div className="text-soft p-4">Загрузка проектов...</div>
+        ) : grouped.length === 0 ? (
+          <div className="text-soft p-4">Проектов пока нет.</div>
+        ) : (
+          grouped.map((grp) => {
+            const isCollapsed = !!collapsed[grp.contractor];
+            return (
+              <div key={grp.contractor} className="contractor-group block">
+                {/* Header группы (Контрагент) */}
+                <div 
+                  className="contractor-header" 
+                  onClick={() => toggleGroup(grp.contractor)}
+                >
+                  <div className="contractor-header-spoler">
+                    {isCollapsed ? <ChevronRight size={20} className="text-soft" /> : <ChevronDown size={20} className="text-soft" />}
+                    <h3 className="m-0 text-lg font-medium">{grp.contractor}</h3>
+                  </div>
+                  <span className="badge">{grp.projects.length}</span>
+                </div>
+
+                {/* Сетка проектов */}
+                {!isCollapsed && (
+                  <div className="projects-grid">
+                    {grp.projects
+                      .sort((a, b) => collator.compare(a.project ?? '', b.project ?? ''))
+                      .map((p) => (
+                        <div
+                          key={p.name || p.project}
+                          className="project-card"
+                          onClick={() => openProjectByName(p.name, grp.contractor, p.project)}
+                        >
+                          {/* Заголовок проекта */}
+                          <div className="project-card-title">
+                            <FolderOpen size={20} className="text-primary" />
+                            <div className="font-bold text-ellipsis" title={p.project || 'Без проекта'}>
+                              {p.project || 'Без проекта'}
+                            </div>
+                          </div>
+
+                          {/* Финансы */}
+                          <div className="project-card-cont">
+                            {/* Доходы */}
+                            {(p.incomeTotal > 0 || p.incomeRemainder !== 0) && (
+                              <div className="project-card-text">
+                                <TrendingUp size={16} className="text-success" />
+                                <span className="text-success font-bold">+{fmtMoney(p.incomeTotal)}</span>
+                                <span className="text-soft text-xs">/ {fmtMoney(p.incomeRemainder)}</span>
+                              </div>
+                            )}
+
+                            {/* Расходы */}
+                            {(p.expenseTotal > 0 || p.expenseRemainder !== 0) && (
+                              <div className="project-card-text">
+                                <TrendingDown size={16} className="text-danger" />
+                                <span className="text-danger font-bold">-{fmtMoney(p.expenseTotal)}</span>
+                                <span className="text-soft text-xs">/ {fmtMoney(p.expenseRemainder)}</span>
+                              </div>
+                            )}
+
+                            {/* Пусто */}
+                            {p.incomeTotal === 0 && p.expenseTotal === 0 && (
+                              <div className="text-soft text-xs pl-6">Нет сумм по договору</div>
+                            )}
+
+
+                            {/* Прогресс */}
+                            <div className="project-card-text">
+                              <PieChart size={16} />
+                              <span>Готовность</span>
+                              <span className={`font-bold text-sm ${p.avgProgress >= 100 ? 'text-success' : ''}`}>
+                                / {p.avgProgress.toFixed(1)}%
+                              </span>
+                            </div>
+
+
+
+                          </div>
+
+                          
+                        </div>
+                      ))}
+                  </div>
                 )}
-              />
+              </div>
+            );
+          })
+        )}
+      </div>
 
-              <TextField
-                label="Проект"
-                value={newProject}
-                onChange={(e) => setNewProject(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && canSave && !addMutation.isPending) {
-                    addMutation.mutate({
-                      contractor: newContractor.trim(),
-                      project: newProject.trim(),
-                    });
-                  }
-                }}
-                fullWidth
-                className="dark-input"
-              />
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setDlgOpen(false)} className="btn-text-no-transform">Отмена</Button>
-            <Button
-              className="bluebutton"
-              disabled={!canSave || addMutation.isPending}
-              onClick={() =>
-                addMutation.mutate({
-                  contractor: newContractor.trim(),
-                  project: newProject.trim(),
-                })
-              }
-            >
-              Создать
-            </Button>
-          </DialogActions>
-        </Dialog>
+      {/* Модалка создания проекта */}
+      {dlgOpen && (
+        <div className="modal-overlay" onClick={() => setDlgOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Новый проект</h3>
+              <button className="icon-btn" onClick={() => setDlgOpen(false)}><X size={20}/></button>
+            </div>
+            
+            <div className="modal-body flex-col">
+              <div className="input-group">
+                <label className="input-label">Контрагент</label>
+                {/* HTML5 Datalist вместо Autocomplete */}
+                <input 
+                  className="input" 
+                  list="contractors-list" 
+                  placeholder="Выберите или введите новое..."
+                  value={newContractor}
+                  onChange={(e) => setNewContractor(e.target.value)}
+                />
+                <datalist id="contractors-list">
+                  {contractorOptions.map(opt => <option key={opt} value={opt} />)}
+                </datalist>
+              </div>
+
+              <div className="input-group">
+                <label className="input-label">Название проекта</label>
+                <input 
+                  className="input" 
+                  placeholder="Например: Жилой комплекс"
+                  value={newProject}
+                  onChange={(e) => setNewProject(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && canSave && !addMutation.isPending) {
+                       addMutation.mutate({ contractor: newContractor, project: newProject });
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn secondary" onClick={() => setDlgOpen(false)}>Отмена</button>
+              <button 
+                className="btn" 
+                disabled={!canSave || addMutation.isPending}
+                onClick={() => addMutation.mutate({ contractor: newContractor, project: newProject })}
+              >
+                Создать
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-    </Box>
+    </div>
   );
 };
 

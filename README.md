@@ -50,9 +50,7 @@
 ```
 .
 ├─ data/                          # Файлы SQLite (WAL/SHM появятся при включённом WAL)
-│  ├─ database.sqlite
-│  ├─ database.sqlite-wal
-│  └─ database.sqlite-shm
+│  └─ database.sqlite
 ├─ public/                        # Публичные статические файлы SPA
 │  ├─ index.html
 │  ├─ favicon.ico, logo*.png, manifest.json, robots.txt, back.jpg
@@ -357,3 +355,8 @@ docker compose up -d --build
 Перемещение планки	Перетаскивание / Перепланирование (Dragging/Rescheduling)
 Растягивание планки	Изменение размера / Длительности (Resizing)
 Номер в иерархии (1, 1.1)	WBS (Work Breakdown Structure)
+
+
+sudo docker ps -a
+sudo docker rm 
+sudo docker rmi mweam-weam-app 

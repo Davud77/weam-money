@@ -18,9 +18,16 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    
+    /* ДОБАВЛЕНО ДЛЯ SHADCN: */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": [
-    "src"
-, "server"  ]
+    "src",
+    "server"
+  ]
 }

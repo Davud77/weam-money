@@ -1,17 +1,6 @@
-// src/pages/LoginPage.tsx
-import React from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  IconButton,
-  InputAdornment,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
-import { Visibility, VisibilityOff } from '@mui/icons-material';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation, useNavigate, Location } from 'react-router-dom';
+import { Eye, EyeOff, AlertCircle, LogIn } from 'lucide-react';
 import { api, me } from '../lib/api';
 
 type LocationState = { from?: Location } | null;
@@ -21,17 +10,17 @@ const LoginPage: React.FC = () => {
   const location = useLocation();
   const state = (location.state as LocationState) || null;
 
-  const [login, setLogin] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [showPass, setShowPass] = React.useState(false);
-  const [submitting, setSubmitting] = React.useState(false);
-  const [errMsg, setErrMsg] = React.useState<string | null>(null);
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
-  // куда вернуться после логина
-  const backTo = React.useMemo(() => state?.from?.pathname || '/dashboard', [state]);
+  // Куда вернуться после логина
+  const backTo = useMemo(() => state?.from?.pathname || '/dashboard', [state]);
 
-  // Если уже авторизованы — сразу на дашборд (без авто-рефреша и редиректов на этой странице)
-  React.useEffect(() => {
+  // Проверка авторизации при загрузке
+  useEffect(() => {
     let cancelled = false;
     me({ noAuthRetry: true, suppressRedirectOn401: true })
       .then((r) => {
@@ -39,7 +28,7 @@ const LoginPage: React.FC = () => {
           navigate('/dashboard', { replace: true });
         }
       })
-      .catch(() => {/* игнорируем 401 на /login */});
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [navigate]);
 
@@ -54,21 +43,15 @@ const LoginPage: React.FC = () => {
 
     try {
       setSubmitting(true);
-
-      // Важно: на логине запрещаем авто-рефреш и любые редиректы из api()
       await api('/api/login', {
         method: 'POST',
         body: JSON.stringify({ login, password }),
         noAuthRetry: true,
         suppressRedirectOn401: true,
       });
-
-      // Сервер выставил HttpOnly-куки — идём на нужную страницу
       navigate(backTo, { replace: true });
     } catch (err: any) {
-      const msg =
-        (err && typeof err.message === 'string' && err.message.trim()) ||
-        'Не удалось авторизоваться';
+      const msg = (err && typeof err.message === 'string' && err.message.trim()) || 'Не удалось авторизоваться';
       setErrMsg(msg);
     } finally {
       setSubmitting(false);
@@ -76,88 +59,78 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <Box className="login-page">
-      {/* Header (общий стиль) */}
-      <Box className="header">
-        <Typography variant="h6" className="title">
-          Авторизация
-        </Typography>
-        <Box className="header-actions" />
-      </Box>
+    <div className="login-container">
+      <div className="card login-card">
+        {/* Заголовок */}
+        <div className="text-center mb-6">
+          <div className="login-logo">
+            <LogIn size={32} />
+          </div>
+          <h2 className="text-xl font-bold mt-4">Вход в систему</h2>
+          <div className="text-soft text-sm mt-1">Введите свои учетные данные</div>
+        </div>
 
-      {/* Карточка логина */}
-      <Box className="content content-login">
-        <Box className="content-card login-card">
-          {errMsg && (
-            <Alert
-              severity="error"
-              className="login-alert"
-              role="alert"
-              aria-live="polite"
-              onClose={() => setErrMsg(null)}
-            >
-              {errMsg}
-            </Alert>
-          )}
+        {/* Ошибка */}
+        {errMsg && (
+          <div className="alert alert-error mb-4">
+            <AlertCircle size={20} />
+            <span>{errMsg}</span>
+          </div>
+        )}
 
-          <form onSubmit={handleSubmit} className="login-form" noValidate>
-            <Stack spacing={2}>
-              <TextField
-                className="dark-input"
-                label="Логин"
-                variant="outlined"
-                value={login}
-                onChange={(e) => setLogin(e.target.value)}
-                required
-                fullWidth
-                autoComplete="username"
-                autoFocus
-                disabled={submitting}
-              />
+        {/* Форма */}
+        <form onSubmit={handleSubmit} className="login-form">
+          <div className="input-group">
+            <label className="input-label">Логин</label>
+            <input
+              className="input"
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              placeholder="username"
+              required
+              autoFocus
+              disabled={submitting}
+              autoComplete="username"
+            />
+          </div>
 
-              <TextField
-                className="dark-input"
-                label="Пароль"
-                variant="outlined"
+          <div className="input-group">
+            <label className="input-label">Пароль</label>
+            <div className="relative">
+              <input
+                className="input pr-10" // pr-10 чтобы текст не заезжал под иконку
                 type={showPass ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
                 required
-                fullWidth
+                disabled={submitting}
                 autoComplete="current-password"
-                disabled={submitting}
-                InputProps={{
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton
-                        className="icon-default"
-                        aria-label={showPass ? 'Скрыть пароль' : 'Показать пароль'}
-                        onClick={() => setShowPass((v) => !v)}
-                        edge="end"
-                        size="small"
-                        tabIndex={-1}
-                      >
-                        {showPass ? <VisibilityOff /> : <Visibility />}
-                      </IconButton>
-                    </InputAdornment>
-                  ),
-                }}
+                style={{ paddingRight: '40px' }}
               />
-
-              <Button
-                className="bluebutton"
-                variant="contained"
-                type="submit"
-                disabled={submitting}
-                fullWidth
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPass(!showPass)}
+                tabIndex={-1}
+                title={showPass ? 'Скрыть пароль' : 'Показать пароль'}
               >
-                {submitting ? 'Входим…' : 'Войти'}
-              </Button>
-            </Stack>
-          </form>
-        </Box>
-      </Box>
-    </Box>
+                {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="btn w-full justify-center mt-2"
+            disabled={submitting}
+            style={{ height: '44px', fontSize: '1rem' }}
+          >
+            {submitting ? 'Входим...' : 'Войти'}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 };
 

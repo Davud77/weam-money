@@ -1,21 +1,23 @@
 // src/pages/ProjectDetailPage.tsx
 import React, { useMemo, useState } from 'react';
 import {
-  Box, Typography, Stack, Paper, Button, TextField, IconButton,
-  MenuItem, Autocomplete, List, ListItemButton, ListItemText, Tooltip,
-  Dialog, DialogTitle, DialogContent, DialogActions
-} from '@mui/material';
-import { DataGrid, GridColDef, GridPaginationModel } from '@mui/x-data-grid';
-import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
-import MenuOpenIcon from '@mui/icons-material/MenuOpen';
-import MenuIcon from '@mui/icons-material/Menu';
-import {
   ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip as ChartTooltip
 } from 'recharts';
 import dayjs from 'dayjs';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { 
+  ChevronLeft, 
+  Plus, 
+  Minus,
+  Edit2, 
+  Trash2, 
+  X, 
+  PanelLeftClose, 
+  PanelLeftOpen,
+  Menu
+} from 'lucide-react';
+
 import { api, me } from '../lib/api';
 import { fmtMoney, fmtPercent } from '../lib/format';
 
@@ -28,13 +30,13 @@ export interface Transaction {
   project: string;
   section: string;
   responsible: string;
-  date: string;              // пусто = план
-  total: number;             // может быть со знаком
+  date: string;
+  total: number;
   advance: number;
   remainder: number;
   operationType: OperationType | string;
   note?: string;
-  project_id?: number | null; // ID строки раздела в /projects
+  project_id?: number | null;
 }
 
 interface ProjectRow {
@@ -49,14 +51,12 @@ interface ProjectRow {
   responsible: number | null;
   responsible_nickname?: string;
   end?: string | null;
-  name?: string; // slug проекта
-  remainder_calc?: number;   // серверное вычисляемое поле
+  name?: string;
+  remainder_calc?: number;
 }
 
 interface User {
-  id: number;
-  login: string;
-  nickname: string;
+  id: number; login: string; nickname: string;
 }
 
 /* ------------------------------ Utils ------------------------------------ */
@@ -65,7 +65,6 @@ const STALE_15M = 15 * 60 * 1000;
 
 const dirRank = (d: ProjectRow['direction']) => (d === 'нам должны' ? 0 : 1);
 
-// DTO для СОЗДАНИЯ. Для обновления используется кастомный объект в мутации.
 const toProjectDTO = (p: ProjectRow) => ({
   id: p.id,
   contractor: String(p.contractor || ''),
@@ -85,51 +84,34 @@ const toIntOrNull = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-const n = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-/** Нормализация типа операции — всё, что НЕ «Расход», считаем «Доход». */
 const normalizeOp = (v: unknown): OperationType => {
   const s = String(v ?? '').trim().toLowerCase();
   return s === 'расход' ? 'Расход' : 'Доход';
 };
 
 /* -------------------------------- Page ----------------------------------- */
-type Props = { showError: (msg: string) => void };
-
-const ProjectDetailPage: React.FC<Props> = ({ showError }) => {
+const ProjectDetailPage: React.FC<{ showError: (msg: string) => void }> = ({ showError }) => {
   const { name = '' } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
   const [showList, setShowList] = useState(true);
 
-  /* -------- Кто я -------- */
-  const { data: meData } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => me(),
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
-  });
+  /* -------- Auth -------- */
+  const { data: meData } = useQuery({ queryKey: ['me'], queryFn: () => me(), staleTime: 300000 });
   const isAdmin = meData?.user?.role === 'admin';
 
-  /* -------- Транзакции -------- */
+  /* -------- Data -------- */
   const { data: allTx = [], isError: txErr, error: txError, isLoading: txLoading } = useQuery<Transaction[]>({
-    queryKey: ['transactions'],
-    queryFn: () => api<Transaction[]>(`${API}/transactions`),
-    refetchOnWindowFocus: false,
+    queryKey: ['transactions'], queryFn: () => api<Transaction[]>(`${API}/transactions`), refetchOnWindowFocus: false,
   });
-  React.useEffect(() => {
-    if (txErr && txError instanceof Error && txError.message !== 'UNAUTHORIZED') showError(txError.message);
-  }, [txErr, txError, showError]);
+  if (txErr && txError instanceof Error && txError.message !== 'UNAUTHORIZED') showError(txError.message);
 
-  /* -------- Проекты/разделы -------- */
   const { data: allProjects = [], isLoading: allPrjLoading } = useQuery<ProjectRow[]>({
-    queryKey: ['projects'],
-    queryFn: () => api<ProjectRow[]>(`${API}/projects`),
-    staleTime: STALE_15M,
-    refetchOnWindowFocus: false,
+    queryKey: ['projects'], queryFn: () => api<ProjectRow[]>(`${API}/projects`), staleTime: STALE_15M,
   });
 
+  // Sidebar list
   const projectsFlat = useMemo(() => {
     const set = new Set<string>();
     const list: { name: string; project: string; contractor: string; grouping: string | null }[] = [];
@@ -144,71 +126,43 @@ const ProjectDetailPage: React.FC<Props> = ({ showError }) => {
       });
     }
     return list.sort((a, b) => {
-      const groupA = a.grouping || '';
-      const groupB = b.grouping || '';
-      const groupCompare = groupA.localeCompare(groupB, 'ru', { sensitivity: 'base' });
-      if (groupCompare !== 0) return groupCompare;
-
-      const contractorCompare = a.contractor.localeCompare(b.contractor, 'ru', { sensitivity: 'base' });
-      if (contractorCompare !== 0) return contractorCompare;
-
-      return a.project.localeCompare(b.project, 'ru', { sensitivity: 'base' });
+      const g = (a.grouping || '').localeCompare(b.grouping || '');
+      if (g !== 0) return g;
+      const c = a.contractor.localeCompare(b.contractor);
+      return c !== 0 ? c : a.project.localeCompare(b.project);
     });
   }, [allProjects]);
 
-  // Опции для выпадающего списка группировок
   const groupingOptions = useMemo(() => {
-    if (!allProjects) return [];
-    const uniqueGroupings = new Set<string>();
-    for (const project of allProjects) {
-      if (project.grouping) {
-        uniqueGroupings.add(project.grouping);
-      }
-    }
-    return Array.from(uniqueGroupings).sort();
+    // Explicit type guard to ensure we have string[]
+    const groups = allProjects
+      .map(p => p.grouping)
+      .filter((g): g is string => !!g);
+    return Array.from(new Set(groups)).sort();
   }, [allProjects]);
 
-
-  const {
-    data: sectionRowsRaw = [],
-    isLoading: secLoading,
-    isError: secErr,
-    error: secError,
-  } = useQuery<ProjectRow[]>({
+  // Current Project Sections
+  const { data: sectionRowsRaw = [], isLoading: secLoading, isError: secErr, error: secError } = useQuery<ProjectRow[]>({
     queryKey: ['projects-by-name', name],
     enabled: !!name,
     queryFn: () => api<ProjectRow[]>(`${API}/projects/by-name/${encodeURIComponent(name)}`),
-    retry: (failureCount, error: any) => {
-      if (String(error?.message || '').toLowerCase().includes('нет доступа')) return false;
-      return failureCount < 2;
-    },
-    refetchOnWindowFocus: false,
+    retry: 1
   });
-  React.useEffect(() => {
-    if (secErr && secError instanceof Error && secError.message !== 'UNAUTHORIZED') showError(secError.message);
-  }, [secErr, secError, showError]);
+  if (secErr && secError instanceof Error && secError.message !== 'UNAUTHORIZED') showError(secError.message);
 
-  const sectionRows = useMemo(
-    () =>
-      sectionRowsRaw
-        .slice()
-        .sort((a, b) => {
-          const byDir = dirRank(a.direction) - dirRank(b.direction);
-          return byDir !== 0 ? byDir : a.section.localeCompare(b.section, 'ru', { sensitivity: 'base' });
-        }),
-    [sectionRowsRaw],
-  );
+  const sectionRows = useMemo(() => 
+    sectionRowsRaw.slice().sort((a, b) => {
+      const byDir = dirRank(a.direction) - dirRank(b.direction);
+      return byDir !== 0 ? byDir : a.section.localeCompare(b.section);
+    }), 
+  [sectionRowsRaw]);
 
   const titleProject = sectionRows[0]?.project || 'Без проекта';
   const titleContractor = sectionRows[0]?.contractor || '';
 
-  /* -------- KPI/график -------- */
+  // Calculate Stats
   const sectionIdSet = useMemo(() => new Set(sectionRows.map(s => Number(s.id))), [sectionRows]);
-
-  const txRows = useMemo(
-    () => allTx.filter((t) => t.project_id != null && sectionIdSet.has(Number(t.project_id))),
-    [allTx, sectionIdSet],
-  );
+  const txRows = useMemo(() => allTx.filter((t) => t.project_id != null && sectionIdSet.has(Number(t.project_id))), [allTx, sectionIdSet]);
 
   const income = txRows.filter((r) => normalizeOp(r.operationType) === 'Доход').reduce((s, r) => s + r.total, 0);
   const expense = txRows.filter((r) => normalizeOp(r.operationType) === 'Расход').reduce((s, r) => s + r.total, 0);
@@ -217,882 +171,401 @@ const ProjectDetailPage: React.FC<Props> = ({ showError }) => {
 
   const chartData = useMemo(() => {
     const m = new Map<string, number>();
-    txRows
-      .filter((r) => r.date)
-      .forEach((r) => {
-        const delta = normalizeOp(r.operationType) === 'Доход' ? r.total : -r.total;
-        m.set(r.date, (m.get(r.date) ?? 0) + delta);
-      });
+    txRows.filter((r) => r.date).forEach((r) => {
+      const delta = normalizeOp(r.operationType) === 'Доход' ? r.total : -r.total;
+      m.set(r.date, (m.get(r.date) ?? 0) + delta);
+    });
     const dates = Array.from(m.keys()).sort();
     let acc = 0;
-    return dates.map((d) => ({
-      date: dayjs(d).format('DD.MM.YYYY'),
-      profit: (acc += m.get(d)!),
-    }));
+    return dates.map((d) => ({ date: dayjs(d).format('DD.MM.YYYY'), profit: (acc += m.get(d)!) }));
   }, [txRows]);
 
-  /* -------- Mutations: sections -------- */
-  const invalidateList = () => {
-    qc.invalidateQueries({ queryKey: ['projects'] });
-    qc.invalidateQueries({ queryKey: ['projects-by-name', name] });
-  };
+  /* -------- Mutations -------- */
+  const invalidateList = () => { qc.invalidateQueries({ queryKey: ['projects'] }); qc.invalidateQueries({ queryKey: ['projects-by-name', name] }); };
+  const invalidateTx = () => { qc.invalidateQueries({ queryKey: ['transactions'] }); };
 
   const updateSection = useMutation({
     mutationFn: async (p: ProjectRow) => {
-      // ИСПРАВЛЕНО: Отправляем только поля, относящиеся к разделу, а не к проекту.
-      const dto = {
-        id: p.id,
-        section: String(p.section || ''),
-        direction: p.direction,
-        grouping: p.grouping || null,
-        amount: Number(p.amount) || 0,
-        progress: Number(p.progress) || 0,
-        responsible: p.responsible ?? null,
-        end: p.end ? dayjs(p.end).format('YYYY-MM-DD') : null,
-      };
+      const dto = { ...toProjectDTO(p), section: String(p.section||''), amount: Number(p.amount)||0 };
       return api(`${API}/projects/${p.id}`, { method: 'PUT', body: JSON.stringify(dto) });
     },
-    onMutate: async (p) => {
-      await qc.cancelQueries({ queryKey: ['projects-by-name', name] });
-      const prev = qc.getQueryData<ProjectRow[]>(['projects-by-name', name]);
-      if (prev) {
-        qc.setQueryData<ProjectRow[]>(
-          ['projects-by-name', name],
-          prev.map((r) => (r.id === p.id ? { ...r, ...p } : r)),
-        );
-      }
-      return { prev };
-    },
-    onError: (e: any, _p, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['projects-by-name', name], ctx.prev);
-      if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-        showError(e?.message || 'Ошибка сохранения раздела');
-      }
-    },
-    onSettled: invalidateList,
-    retry: 0,
+    onSuccess: invalidateList,
+    onError: (e: any) => showError(e.message || 'Ошибка')
   });
 
   const createSection = useMutation({
     mutationFn: async (p: Omit<ProjectRow, 'id'>) => {
-      const dto = { ...toProjectDTO({ ...(p as any), id: 0 } as ProjectRow), name };
+      const dto = { ...toProjectDTO({ ...p, id: 0 } as ProjectRow), name };
       return api(`${API}/projects`, { method: 'POST', body: JSON.stringify(dto) });
     },
     onSuccess: invalidateList,
-    onError: (e: any) => {
-      if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-        showError(e?.message || 'Ошибка создания раздела');
-      }
-    },
-    retry: 0,
+    onError: (e: any) => showError(e.message || 'Ошибка')
   });
 
   const deleteSection = useMutation({
-    mutationFn: async (id: number) => api(`${API}/projects/${id}`, { method: 'DELETE' }),
-    onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: ['projects-by-name', name] });
-      const prev = qc.getQueryData<ProjectRow[]>(['projects-by-name', name]);
-      if (prev) qc.setQueryData<ProjectRow[]>(['projects-by-name', name], prev.filter((r) => r.id !== id));
-      return { prev };
-    },
-    onError: (e: any, _id, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['projects-by-name', name], ctx.prev);
-      if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-        showError(e?.message || 'Ошибка удаления раздела');
-      }
-    },
-    onSettled: invalidateList,
-    retry: 0,
+    mutationFn: (id: number) => api(`${API}/projects/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidateList,
+    onError: (e: any) => showError(e.message || 'Ошибка')
   });
 
-  /* -------- Mutations: transactions -------- */
-  const invalidateTx = () => {
-    qc.invalidateQueries({ queryKey: ['transactions'] });
-  };
+  const createTx = useMutation({ mutationFn: (d: any) => api(`${API}/transactions`, { method: 'POST', body: JSON.stringify(d) }), onSuccess: invalidateTx });
+  const updateTx = useMutation({ mutationFn: (d: any) => api(`${API}/transactions/${d.id}`, { method: 'PUT', body: JSON.stringify(d) }), onSuccess: invalidateTx });
+  const removeTx = useMutation({ mutationFn: (id: number) => api(`${API}/transactions/${id}`, { method: 'DELETE' }), onSuccess: invalidateTx });
 
-  const createTx = useMutation({
-    mutationFn: (d: Omit<Transaction, 'id'>) =>
-      api(`${API}/transactions`, { method: 'POST', body: JSON.stringify(d) }),
-    onSuccess: () => invalidateTx(),
-    onError: (e: any) => {
-      if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-        showError(e?.message || 'Ошибка создания транзакции');
-      }
-    },
-    retry: 0,
-  });
-
-  const updateTx = useMutation({
-    mutationFn: (d: Transaction) =>
-      api(`${API}/transactions/${d.id}`, { method: 'PUT', body: JSON.stringify(d) }),
-    onSuccess: () => invalidateTx(),
-    onError: (e: any) => {
-      if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-        showError(e?.message || 'Ошибка сохранения транзакции');
-      }
-    },
-    retry: 0,
-  });
-
-  const removeTx = useMutation({
-    mutationFn: (id: number) => api(`${API}/transactions/${id}`, { method: 'DELETE' }),
-    onSuccess: () => invalidateTx(),
-    onError: (e: any) => {
-      if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-        showError(e?.message || 'Ошибка удаления транзакции');
-      }
-    },
-    retry: 0,
-  });
-
-  /* -------------------- UI state -------------------- */
-  const [secPagination, setSecPagination] = useState<GridPaginationModel>({ page: 0, pageSize: 25 });
+  /* -------- UI State -------- */
   const [editSectionRow, setEditSectionRow] = useState<ProjectRow | null>(null);
-
   const [txDialogOpen, setTxDialogOpen] = useState(false);
   const [txForm, setTxForm] = useState<Partial<Transaction>>({});
   const isTxEdit = Boolean(txForm && 'id' in txForm);
 
-  /* -------------------- Users -------------------- */
-  const { data: users = [] } = useQuery<User[]>({
-    queryKey: ['users'],
-    enabled: true,
-    queryFn: () => api<User[]>(`${API}/users`),
-    staleTime: STALE_15M,
-    refetchOnWindowFocus: false,
-    retry: 0,
-  });
-
+  const { data: users = [] } = useQuery<User[]>({ queryKey: ['users'], enabled: true, queryFn: () => api<User[]>(`${API}/users`), staleTime: STALE_15M });
   const usersByLogin = useMemo(() => {
     const m = new Map<string, User>();
     users.forEach(u => m.set(u.login, u));
     return m;
   }, [users]);
 
-  /* -------------------- Columns -------------------- */
-  const baseCols: GridColDef<ProjectRow>[] = [
-    { field: 'section', headerName: 'Раздел', flex: 1.6, cellClassName: 'cell-section-white' },
-    {
-      field: 'direction',
-      headerName: 'Тип операции',
-      flex: 1.0,
-      renderCell: (p) => {
-        const isIncome = p.value === 'нам должны';
-        const cls = `amount ${isIncome ? 'amount--income' : 'amount--expense'}`;
-        return <Typography className={cls}>{p.value}</Typography>;
-      },
-      sortComparator: (a, b) => dirRank(a as ProjectRow['direction']) - dirRank(b as ProjectRow['direction']),
-    },
-    {
-      field: 'responsible_nickname',
-      headerName: 'Ответственный',
-      flex: 1,
-      renderCell: (p) => <Typography className="t-primary t-strong">{p.value || '—'}</Typography>,
-    },
-    {
-      field: 'amount',
-      headerName: 'Сумма договора',
-      flex: 1,
-      sortComparator: (a, b) => Number(a ?? 0) - Number(b ?? 0),
-      renderCell: (p) => <Typography>{fmtMoney(n((p.row as ProjectRow).amount))}</Typography>,
-    },
-    {
-      field: 'remainder_calc',
-      headerName: 'Остаток',
-      flex: 1,
-      sortable: false,
-      renderCell: (p) => {
-        const val = Number((p.row as ProjectRow).remainder_calc ?? 0);
-        const cls = `amount ${val >= 0 ? 'amount--income' : 'amount--expense'}`;
-        return <Typography className={cls}>{fmtMoney(val)}</Typography>;
-      },
-    },
-  ];
-
-  const actionCol: GridColDef<ProjectRow> = {
-    field: 'actions',
-    headerName: '',
-    width: 64,
-    sortable: false,
-    filterable: false,
-    renderCell: (p) => (
-      <IconButton size="small" onClick={() => setEditSectionRow(p.row as ProjectRow)} className="icon-edit" aria-label="Редактировать раздел">
-        <EditIcon fontSize="small" />
-      </IconButton>
-    ),
-  };
-
-  const sectionCols = useMemo<GridColDef<ProjectRow>[]>(() => (isAdmin ? [...baseCols, actionCol] : baseCols), [isAdmin]);
-
-  const txColumns = useMemo<GridColDef[]>(
-    () => [
-      {
-        field: 'date',
-        headerName: 'Дата',
-        width: 110,
-        align: 'center',
-        headerAlign: 'center',
-        cellClassName: 'date-cell',
-        renderCell: (p: any) =>
-          p?.value ? (
-            <Typography variant="body2" className="t-primary">
-              {new Date(p.value).toLocaleDateString('ru-RU')}
-            </Typography>
-          ) : (
-            <Typography variant="caption" className="t-secondary">план</Typography>
-          ),
-      },
-      {
-        field: 'total',
-        headerName: 'Операция',
-        flex: 1.6,
-        sortable: false,
-        renderCell: (p: any) => {
-          const row = p?.row as Transaction | undefined;
-          const isExpense = normalizeOp(row?.operationType) === 'Расход';
-          const amount = Math.abs(row?.total ?? 0);
-          const formatted = `${isExpense ? '-' : '+'}${fmtMoney(amount)}`;
-          const pr = sectionRows.find(pp => Number(pp.id) === Number(row?.project_id));
-          const sectionOnly = pr ? (pr.section || '').toString() : (row?.section || '');
-          return (
-            <Stack spacing={0.3} className="minw-0">
-              <Typography className={`amount ${isExpense ? 'amount--expense' : 'amount--income'}`}>
-                {formatted}
-              </Typography>
-              <Typography variant="body2" className="t-primary t-strong" title={sectionOnly}>
-                {sectionOnly || '—'}
-              </Typography>
-            </Stack>
-          );
-        },
-      },
-      {
-        field: 'note',
-        headerName: 'Статья/описание',
-        flex: 1.4,
-        sortable: false,
-        renderCell: (p: any) => (
-          <Typography variant="body2" className="t-secondary wrap">
-            {p?.value || '—'}
-          </Typography>
-        ),
-      },
-      {
-        field: 'project_key',
-        headerName: 'Проект',
-        flex: 1.4,
-        sortable: false,
-        valueGetter: (params: any) => {
-          const row = params?.row as Transaction | undefined;
-          const pr = sectionRows.find((pp) => Number(pp.id) === Number(row?.project_id));
-          return pr ? `${pr.contractor || ''} ${pr.project || ''}`.trim() : '';
-        },
-        renderCell: (p: any) => {
-          const row = p?.row as Transaction | undefined;
-          const pr = sectionRows.find((pp) => Number(pp.id) === Number(row?.project_id));
-          if (!pr) return <Typography variant="body2" className="t-primary">—</Typography>;
-          return (
-            <Stack spacing={0.2} className="minw-0">
-              <Typography variant="body2" className="t-primary t-strong nowrap">{pr.contractor || '—'}</Typography>
-              <Typography variant="caption" className="t-secondary nowrap">{pr.project || '—'}</Typography>
-            </Stack>
-          );
-        },
-      },
-      {
-        field: 'responsible',
-        headerName: 'Счёт',
-        flex: 1.2,
-        renderCell: (p: any) => {
-          const login = String(p?.value ?? '');
-          const usr = usersByLogin.get(login);
-          const nick = (usr?.nickname || '').trim();
-          return (
-            <Typography variant="body2" className="t-primary t-strong">
-              {nick || login}
-            </Typography>
-          );
-        },
-      },
-      ...(isAdmin
-        ? [{
-            field: 'actions',
-            headerName: '',
-            width: 64,
-            sortable: false,
-            filterable: false,
-            renderCell: (p: any) => (
-              <IconButton
-                onClick={() => { (document.activeElement as HTMLElement | null)?.blur?.(); setTxForm(p.row); setTxDialogOpen(true); }}
-                size="small" className="icon-edit" aria-label="Редактировать"
-              >
-                <EditIcon fontSize="small" />
-              </IconButton>
-            ),
-          } as GridColDef]
-        : []),
-    ],
-    [isAdmin, sectionRows, usersByLogin]
-  );
-
-  /* ---------------------------- Render ------------------------------------ */
-  const profitValueAbs = Math.abs(profit);
-  const profitDisplay = `${profit >= 0 ? '+' : '-'}${fmtMoney(profitValueAbs)}`;
-  const profitClass = `amount ${profit >= 0 ? 'amount--income' : 'amount--expense'}`;
-
+  /* -------- Render -------- */
   return (
-    <Box className="root pd-root transactions-root transactions-page">
+    <div className="page-container pd-page">
       {/* Header */}
-      <Box className="header pd-header transactions-header">
-        <Box className="pd-header__left">
-          <Tooltip title={showList ? 'Скрыть список проектов' : 'Показать список проектов'}>
-            <IconButton size="small" onClick={() => setShowList((v) => !v)} className="pd-header__toggle icon-default" aria-label="Переключить список проектов">
-              {showList ? <MenuOpenIcon fontSize="small" /> : <MenuIcon fontSize="small" />}
-            </IconButton>
-          </Tooltip>
-
-          <Typography variant="h6" className="title pd-title-override">
-            <Box component="span" className="pd-breadcrumb-link no-underline" onClick={() => navigate('/projects')}>
-              Проекты
-            </Box>
-            {' / '}
-            <span className="pd-breadcrumb-current">{titleProject || 'Без проекта'}</span>
-          </Typography>
-        </Box>
+      <div className="header">
+        <div className="header_block">
+          <button className="icon-btn" onClick={() => setShowList(v => !v)} title="Список проектов">
+            {showList ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+          </button>
+          
+          <div className="header_block">
+             <div className="text-xs text-soft cursor-pointer hover:text-white flex items-center gap-1" onClick={() => navigate('/projects')}>
+               <ChevronLeft size={12}/> Проекты
+             </div>
+             <h2 className="text-xl font-bold m-0">{titleProject}</h2>
+          </div>
+        </div>
 
         {isAdmin && (
-          <Stack direction="row" spacing={1}>
-            <Button
-              className="bluebutton tiny-btn"
-              variant="contained"
-              size="small"
-              onClick={() => {
+           <div className="actions-block">
+             <button className="btn" onClick={() => {
                 const firstPid = sectionRows[0]?.id ?? null;
-                setTxForm({
-                  contractor: titleContractor,
-                  project: titleProject,
-                  section: '',
-                  responsible: '',
-                  date: '',
-                  total: 0,
-                  advance: 0,
-                  remainder: 0,
-                  operationType: 'Доход',
-                  note: '',
-                  project_id: firstPid ?? null,
-                });
+                setTxForm({ contractor: titleContractor, project: titleProject, section: '', responsible: '', date: '', total: 0, advance: 0, remainder: 0, operationType: 'Доход', note: '', project_id: firstPid ?? null });
                 setTxDialogOpen(true);
-              }}
-            >
-              Добавить транзакцию
-            </Button>
-
-            <Button
-              className="bluebutton tiny-btn"
-              variant="contained"
-              size="small"
-              onClick={() =>
-                setEditSectionRow({
-                  id: 0,
-                  contractor: titleContractor,
-                  project: titleProject,
-                  section: '',
-                  direction: 'нам должны',
-                  grouping: '',
-                  amount: 0,
-                  progress: 0,
-                  responsible: null,
-                  responsible_nickname: '',
-                  end: null,
-                  name,
-                  remainder_calc: 0,
-                })
-              }
-            >
-              Добавить раздел
-            </Button>
-          </Stack>
+             }}>
+               <Plus size={16}/>
+               <div className="unset">Транзакция</div>  
+             </button>
+             <button className="btn secondary" onClick={() => setEditSectionRow({ id: 0, contractor: titleContractor, project: titleProject, section: '', direction: 'нам должны', grouping: '', amount: 0, progress: 0, responsible: null, responsible_nickname: '', end: null, name, remainder_calc: 0 })}>
+               <Plus size={16}/>
+               <div className="unset">Раздел</div>
+             </button>
+           </div>
         )}
-      </Box>
+      </div>
 
-      {/* Main */}
-      <Box className="content pd-main transactions-content">
-        {/* Left: список проектов */}
-        {showList && (
-          <Box className="pd-left">
-            <Box className="pd-left__scroll">
-              <List disablePadding dense>
-                {projectsFlat.map((p) => {
-                  const active = p.name === name;
-                  return (
-                    <ListItemButton
-                      key={p.name}
-                      selected={active}
-                      onClick={() => navigate(`/projects/${encodeURIComponent(p.name)}`)}
-                      className={`pd-left-item ${active ? 'is-active' : ''}`}
-                    >
-                      <ListItemText
-                        primary={p.project}
-                        secondary={`${p.grouping ? p.grouping + ' / ' : ''}${p.contractor}`}
-                        primaryTypographyProps={{ className: 't-primary' }}
-                        secondaryTypographyProps={{ className: 't-secondary' }}
-                      />
-                    </ListItemButton>
-                  );
-                })}
-              </List>
-            </Box>
-          </Box>
-        )}
+      <div className="content pd-content">
+         {/* Sidebar List */}
+         {showList && (
+           <div className="card pd-sidebar block">
+              {projectsFlat.map(p => {
+                const active = p.name === name;
+                return (
+                  <div 
+                    key={p.name} 
+                    className={`pd-nav-item ${active ? 'active' : ''}`}
+                    onClick={() => navigate(`/projects/${encodeURIComponent(p.name)}`)}
+                  >
+                    <div className="font-medium text-sm truncate">{p.project}</div>
+                    <div className="text-xs text-soft truncate">{p.grouping ? `${p.grouping} / ` : ''}{p.contractor}</div>
+                  </div>
+                )
+              })}
+           </div>
+         )}
 
-        {/* Right */}
-        <Box className={showList ? 'pd-right' : ''}>
-          {/* KPI + chart */}
-          <Paper variant="outlined" className="pd-card content-card bg-surface">
-            <Box className="pd-card__inner">
-              <Stack direction="row" className="kpi-row" spacing={2}>
-                <Kpi title="Чистая прибыль" value={profitDisplay} className={profitClass} />
-                <Kpi title="Доходы" value={fmtMoney(income)} />
-                <Kpi title="Расходы" value={fmtMoney(expense)} />
-                <Kpi title="Рентабельность" value={fmtPercent(margin)} />
-              </Stack>
-            </Box>
+         {/* Main Content */}
+         <div className="projectdetailmain">
+            
+            {/* KPI & Chart */}
+            <div className="card projectdetailcard pd-stats block">
+               <div className="projectdetail-kpis">
+                 <Kpi title="Чистая прибыль" value={`${profit >= 0 ? '+' : '-'}${fmtMoney(Math.abs(profit))}`} className={profit >= 0 ? 'text-success' : 'text-danger'} />
+                 <Kpi title="Доходы" value={fmtMoney(income)} />
+                 <Kpi title="Расходы" value={fmtMoney(expense)} />
+                 <Kpi title="Рентабельность" value={fmtPercent(margin)} />
+               </div>
 
-            <Box className="pd-chart">
-              {chartData.length > 1 ? (
-                <ResponsiveContainer width="100%" height="90%">
-                  <LineChart data={chartData} className="chart chart--line">
-                    <CartesianGrid vertical={false} className="grid grid--weak" />
-                    <XAxis dataKey="date" className="axis axis--soft" />
-                    <YAxis className="axis axis--soft" />
-                    <ChartTooltip
-                      wrapperClassName="recharts-tooltip tooltip-compact tooltip-unified"
-                      content={<PdProfitTooltip />}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="profit"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      isAnimationActive={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <Typography className="pd-chart__empty">Недостаточно данных для графика</Typography>
-              )}
-            </Box>
-          </Paper>
+               <div style={{ height: 250, width: '100%' }}>
+                  {chartData.length > 1 ? (
+                    <ResponsiveContainer>
+                      <LineChart data={chartData}>
+                        <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3"/>
+                        <XAxis dataKey="date" stroke="var(--text-soft)" fontSize={11} tickLine={false} axisLine={false}/>
+                        <YAxis stroke="var(--text-soft)" fontSize={11} tickLine={false} axisLine={false}/>
+                        <ChartTooltip 
+                           content={({ active, payload, label }) => {
+                             if (!active || !payload?.length) return null;
+                             return (
+                               <div className="chart-tooltip">
+                                 <div className="text-soft text-xs">{label}</div>
+                                 <div className="font-bold">{fmtMoney(Number(payload[0].value))}</div>
+                               </div>
+                             )
+                           }} 
+                        />
+                        <Line type="monotone" dataKey="profit" stroke="var(--primary)" strokeWidth={2} dot={{r:3}} isAnimationActive={false}/>
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : <div className="text-soft text-center text-sm py-10">Недостаточно данных для графика</div>}
+               </div>
+            </div>
 
-          {/* Разделы */}
-          <Box className="grid-wrapper">
-            <DataGrid
-              rows={sectionRows}
-              columns={sectionCols}
-              getRowId={(r) => r.id}
-              pageSizeOptions={[25, 50, 100]}
-              paginationModel={secPagination}
-              onPaginationModelChange={setSecPagination}
-              disableRowSelectionOnClick
-              getRowHeight={() => 'auto'}
-              initialState={{
-                sorting: { sortModel: [{ field: 'direction', sort: 'asc' }, { field: 'section', sort: 'asc' }] },
-              }}
-              getRowClassName={(p) => (p.row.direction === 'нам должны' ? 'dir-credit' : 'dir-debt')}
-              loading={secLoading || txLoading || allPrjLoading}
-              density="compact"
-              className="transactions-grid grid--dark-head"
-            />
-          </Box>
+            {/* Table: Sections */}
+            <div className="card projectdetailcard block">
+               <div className="p-3 border-b border-white-5 font-bold text-sm bg-white-5">Разделы проекта</div>
+               <div className="overflow-x-auto">
+                 <table className="table w-full">
+                   <thead>
+                     <tr>
+                       <th>Раздел</th>
+                       <th>Тип операции</th>
+                       <th>Ответственный</th>
+                       <th className="text-right">Сумма договора</th>
+                       <th className="text-right">Остаток</th>
+                       {isAdmin && <th className="text-center w-10"></th>}
+                     </tr>
+                   </thead>
+                   <tbody>
+                      {secLoading ? <tr><td colSpan={6} className="p-4 text-center text-soft">Загрузка...</td></tr> :
+                       sectionRows.map(r => (
+                         <tr key={r.id} className="hover:bg-sidebar">
+                           <td className="font-medium">{r.section}</td>
+                           <td>
+                             <span className={r.direction === 'нам должны' ? 'text-success' : 'text-danger'}>
+                               {r.direction}
+                             </span>
+                           </td>
+                           <td className="text-soft text-sm">{r.responsible_nickname || '—'}</td>
+                           <td className="text-right font-mono">{fmtMoney(r.amount)}</td>
+                           <td className={`text-right font-mono font-bold ${(r.remainder_calc??0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                             {fmtMoney(r.remainder_calc??0)}
+                           </td>
+                           {isAdmin && (
+                             <td className="text-center">
+                               <button className="icon-btn" onClick={() => setEditSectionRow(r)}>
+                                 <Edit2 size={16}/>
+                               </button>
+                             </td>
+                           )}
+                         </tr>
+                       ))}
+                   </tbody>
+                 </table>
+               </div>
+            </div>
 
-          {/* Транзакции */}
-          <Box className="grid-wrapper">
-            <DataGrid
-              rows={txRows}
-              columns={txColumns}
-              getRowId={(r) => r.id}
-              getRowHeight={() => 'auto'}
-              loading={txLoading}
-              initialState={{ pagination: { paginationModel: { pageSize: 100 } } }}
-              pageSizeOptions={[100, 250, 500]}
-              disableRowSelectionOnClick
-              density="compact"
-              className="transactions-grid grid--dark-head"
-            />
-          </Box>
-        </Box>
-      </Box>
+            {/* Table: Transactions */}
+            <div className="card projectdetailcard block">
+               <div className="p-3 border-b border-white-5 font-bold text-sm bg-white-5">Транзакции по проекту</div>
+               <div className="overflow-x-auto">
+                 <table className="table w-full sticky-header">
+                   <thead>
+                     <tr>
+                       <th className="w-24 text-center">Дата</th>
+                       <th className="text-right">Сумма</th>
+                       <th>Раздел</th>
+                       <th>Описание</th>
+                       <th>Счёт</th>
+                       {isAdmin && <th className="text-center w-10"></th>}
+                     </tr>
+                   </thead>
+                   <tbody>
+                      {txLoading ? <tr><td colSpan={6} className="p-4 text-center text-soft">Загрузка...</td></tr> :
+                       txRows.map(t => {
+                         const isExpense = normalizeOp(t.operationType) === 'Расход';
+                         const pr = sectionRows.find(s => s.id === t.project_id);
+                         const secName = pr ? pr.section : t.section;
+                         const nick = usersByLogin.get(t.responsible)?.nickname || t.responsible;
+                         return (
+                           <tr key={t.id} className="hover:bg-sidebar">
+                             <td className="text-center text-sm">
+                               {t.date ? new Date(t.date).toLocaleDateString('ru') : <span className="badge badge-secondary">План</span>}
+                             </td>
+                             <td className="text-right font-mono">
+                               <span className={isExpense ? 'text-danger' : 'text-success'}>
+                                 {isExpense ? '-' : '+'}{fmtMoney(Math.abs(t.total))}
+                               </span>
+                             </td>
+                             <td className="text-sm font-medium">{secName || '—'}</td>
+                             <td className="text-sm text-soft" title={t.note}>{t.note || '—'}</td>
+                             <td className="text-sm text-soft">{nick}</td>
+                             {isAdmin && (
+                               <td className="text-center">
+                                 <button className="icon-btn" onClick={() => { setTxForm(t); setTxDialogOpen(true); }}>
+                                   <Edit2 size={16}/>
+                                 </button>
+                               </td>
+                             )}
+                           </tr>
+                         )
+                       })}
+                   </tbody>
+                 </table>
+               </div>
+            </div>
+         </div>
+      </div>
 
-      {/* Dialog – Section */}
+      {/* MODAL: Section */}
       {isAdmin && editSectionRow && (
-        <SectionDialog
-          isAdmin={isAdmin}
-          section={editSectionRow}
-          groupingOptions={groupingOptions}
-          onClose={() => setEditSectionRow(null)}
-          onSave={async (s, mode) => {
-            try {
-              if (mode === 'create') {
-                const { id: _omit, responsible_nickname: _nick, remainder_calc: _r, ...rest } = s as any;
-                await createSection.mutateAsync(rest as Omit<ProjectRow, 'id'>);
-              } else {
-                await updateSection.mutateAsync(s);
-              }
-              setEditSectionRow(null);
-            } catch (e: any) {
-              if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-                showError(e?.message || 'Не удалось сохранить раздел');
-              }
-            }
-          }}
-          onRemove={async (id) => {
-            try {
-              if (id) await deleteSection.mutateAsync(id);
-              setEditSectionRow(null);
-            } catch (e: any) {
-              if (e?.message !== 'UNAUTHORIZED' && e?.message !== 'Недостаточно прав') {
-                showError(e?.message || 'Не удалось удалить раздел');
-              }
-            }
-          }}
-        />
+        <div className="modal-overlay" onClick={() => setEditSectionRow(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+             <div className="modal-header">
+               <h3>{editSectionRow.id ? 'Редактировать раздел' : 'Новый раздел'}</h3>
+               <button className="icon-btn" onClick={() => setEditSectionRow(null)}><X size={20}/></button>
+             </div>
+             <div className="modal-body flex flex-col gap-4">
+               <div className="input-group">
+                 <label className="input-label">Название раздела</label>
+                 <input className="input" value={editSectionRow.section || ''} onChange={e => setEditSectionRow({...editSectionRow, section: e.target.value})} />
+               </div>
+               
+               <div className="input-group">
+                 <label className="input-label">Группировка</label>
+                 <input className="input" list="group-opts" value={editSectionRow.grouping ?? ''} onChange={e => setEditSectionRow({...editSectionRow, grouping: e.target.value})} />
+                 <datalist id="group-opts">{groupingOptions.map(g => <option key={g} value={g}/>)}</datalist>
+               </div>
+
+               <div className="input-group">
+                 <label className="input-label">Тип</label>
+                 <select className="input" value={editSectionRow.direction} onChange={e => setEditSectionRow({...editSectionRow, direction: e.target.value as any})}>
+                   <option value="нам должны">Нам должны (Доход)</option>
+                   <option value="мы должны">Мы должны (Расход)</option>
+                 </select>
+               </div>
+
+               <div className="input-group">
+                 <label className="input-label">Ответственный</label>
+                 <select className="input" value={editSectionRow.responsible ?? ''} onChange={e => setEditSectionRow({...editSectionRow, responsible: e.target.value ? Number(e.target.value) : null})}>
+                   <option value="">(Нет)</option>
+                   {users.map(u => <option key={u.id} value={u.id}>{u.nickname || u.login}</option>)}
+                 </select>
+               </div>
+
+               <div className="input-group">
+                 <label className="input-label">Сумма договора</label>
+                 <input type="number" className="input" value={editSectionRow.amount} onChange={e => setEditSectionRow({...editSectionRow, amount: +e.target.value})} />
+               </div>
+             </div>
+             
+             <div className="modal-footer justify-between">
+                {editSectionRow.id ? (
+                  <button className="btn danger" onClick={() => { if(window.confirm('Удалить раздел?')) deleteSection.mutate(editSectionRow.id); setEditSectionRow(null); }}>
+                    <Trash2 size={16} className="mr-2"/> Удалить
+                  </button>
+                ) : <div/>}
+                <div className="actions-block">
+                   <button className="btn secondary" onClick={() => setEditSectionRow(null)}>Отмена</button>
+                   <button className="btn" onClick={() => {
+                      if (editSectionRow.id) updateSection.mutate(editSectionRow);
+                      else createSection.mutate(editSectionRow);
+                      setEditSectionRow(null);
+                   }}>Сохранить</button>
+                </div>
+             </div>
+          </div>
+        </div>
       )}
 
-      {/* Dialog – Transaction */}
-      {isAdmin && (
-        <Dialog
-          open={txDialogOpen}
-          onClose={() => setTxDialogOpen(false)}
-          fullWidth
-          maxWidth="md"
-          PaperProps={{ className: 'dialog-paper' }}
-          disableRestoreFocus
-          keepMounted
-        >
-          <DialogTitle className="with-bottom-border">
-            {isTxEdit ? 'Редактировать транзакцию' : 'Добавить транзакцию'}
-          </DialogTitle>
-          <DialogContent dividers>
-            <TxForm
-              value={txForm}
-              onChange={setTxForm}
-              users={users}
-              sectionRows={sectionRows}
-              titleContractor={titleContractor}
-              titleProject={titleProject}
-            />
-          </DialogContent>
-          <DialogActions className="with-top-border">
-            {isTxEdit && txForm.id ? (
-              <Button
-                color="error"
-                startIcon={<DeleteIcon />}
-                onClick={() => {
-                  if (txForm.id && window.confirm('Удалить транзакцию?')) {
-                    removeTx.mutate(txForm.id);
-                    setTxDialogOpen(false);
-                    setTxForm({});
-                  }
-                }}
-                className="btn-text-no-transform"
-              >
-                Удалить
-              </Button>
-            ) : null}
-            <Box className="flex-grow" />
-            <Button onClick={() => setTxDialogOpen(false)} className="btn-text-no-transform">Отмена</Button>
-            <Button
-              variant="contained"
-              className="btn-contained"
-              onClick={() => {
-                const dto: Transaction | Omit<Transaction, 'id'> = {
-                  id: (txForm as any).id,
-                  contractor: txForm.contractor ?? titleContractor,
-                  project: txForm.project ?? titleProject,
-                  section: txForm.section ?? '',
-                  responsible: txForm.responsible ?? '',
-                  date: txForm.date ?? '',
-                  total: Number(txForm.total ?? 0),
-                  advance: Number(txForm.advance ?? 0),
-                  remainder: Number(txForm.remainder ?? txForm.total ?? 0),
-                  operationType: normalizeOp(txForm.operationType),
-                  note: txForm.note ?? '',
-                  project_id: toIntOrNull(txForm.project_id ?? (sectionRows[0]?.id ?? null)),
-                } as any;
+      {/* MODAL: Transaction */}
+      {isAdmin && txDialogOpen && (
+        <div className="modal-overlay" onClick={() => setTxDialogOpen(false)}>
+           <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>{isTxEdit ? 'Редактировать транзакцию' : 'Новая транзакция'}</h3>
+                <button className="icon-btn" onClick={() => setTxDialogOpen(false)}><X size={20}/></button>
+              </div>
+              <div className="modal-body flex flex-col gap-4">
+                 <div className="input-group">
+                    <label className="input-label">Раздел</label>
+                    <select 
+                      className="input" 
+                      value={txForm.project_id || ''} 
+                      onChange={e => {
+                        const pid = Number(e.target.value);
+                        const s = sectionRows.find(x => x.id === pid);
+                        setTxForm({...txForm, project_id: pid, section: s?.section || '', contractor: titleContractor, project: titleProject });
+                      }}
+                    >
+                      <option value="">-- Выберите --</option>
+                      {sectionRows.map(s => <option key={s.id} value={s.id}>{s.section}</option>)}
+                    </select>
+                 </div>
 
-                if (isTxEdit) {
-                  updateTx.mutate(dto as Transaction);
-                } else {
-                  const { id, ...createDto } = dto as Transaction;
-                  createTx.mutate(createDto as Omit<Transaction, 'id'>);
-                }
-                setTxDialogOpen(false);
-                setTxForm({});
-              }}
-              disabled={!txForm.responsible || (!txForm.date && !txForm.note)}
-            >
-              Сохранить
-            </Button>
-          </DialogActions>
-        </Dialog>
+                 <div className="input-group">
+                   <label className="input-label">Тип</label>
+                   <select className="input" value={normalizeOp(txForm.operationType)} onChange={e => setTxForm({...txForm, operationType: e.target.value as any})}>
+                     <option value="Доход">Доход</option>
+                     <option value="Расход">Расход</option>
+                   </select>
+                 </div>
+
+                 <div className="flex gap-4">
+                    <div className="input-group flex-1">
+                      <label className="input-label">Дата</label>
+                      <input type="date" className="input" value={txForm.date || ''} onChange={e => setTxForm({...txForm, date: e.target.value})} />
+                    </div>
+                    <div className="input-group flex-1">
+                      <label className="input-label">Сумма</label>
+                      <input type="number" className="input" value={txForm.total || ''} onChange={e => setTxForm({...txForm, total: +e.target.value})} />
+                    </div>
+                 </div>
+
+                 <div className="input-group">
+                   <label className="input-label">Счёт</label>
+                   <select className="input" value={txForm.responsible || ''} onChange={e => setTxForm({...txForm, responsible: e.target.value})}>
+                     <option value="">-- Выберите --</option>
+                     {users.map(u => <option key={u.id} value={u.login}>{u.nickname || u.login}</option>)}
+                   </select>
+                 </div>
+
+                 <div className="input-group">
+                   <label className="input-label">Примечание</label>
+                   <textarea className="input" rows={2} value={txForm.note || ''} onChange={e => setTxForm({...txForm, note: e.target.value})} />
+                 </div>
+              </div>
+
+              <div className="modal-footer justify-between">
+                {isTxEdit && txForm.id ? (
+                   <button className="btn danger" onClick={() => { if(window.confirm('Удалить?')) removeTx.mutate(txForm.id!); setTxDialogOpen(false); }}>
+                     <Trash2 size={16} className="mr-2"/> Удалить
+                   </button>
+                ) : <div/>}
+                <div className="flex gap-2">
+                   <button className="btn secondary" onClick={() => setTxDialogOpen(false)}>Отмена</button>
+                   <button className="btn" onClick={() => {
+                      const dto = { 
+                        ...txForm, 
+                        contractor: titleContractor, project: titleProject, 
+                        remainder: Number(txForm.total)||0 
+                      };
+                      if (isTxEdit) updateTx.mutate(dto);
+                      else createTx.mutate(dto);
+                      setTxDialogOpen(false);
+                   }}>Сохранить</button>
+                </div>
+              </div>
+           </div>
+        </div>
       )}
-    </Box>
+    </div>
   );
 };
 
-const Kpi = ({
-  title,
-  value,
-  highlight,
-  className,
-}: {
-  title: string;
-  value: string;
-  highlight?: boolean;
-  className?: string;
-}) => (
-  <Stack spacing={0.5} className="kpi-col">
-    <Typography variant="body2" className="t-secondary">
-      {title}
-    </Typography>
-    <Typography variant={highlight ? 'h4' : 'h5'} className={`t-strong ${className || ''}`}>
-      {value}
-    </Typography>
-  </Stack>
+// Helper Component for KPI
+const Kpi = ({ title, value, className }: { title: string, value: string, className?: string }) => (
+  <div className="component-kpi">
+    <span className="component-kpi-text">{title}</span>
+    <span className={`component-kpi-title ${className || ''}`}>{value}</span>
+  </div>
 );
-
-type RTooltipProps = import('recharts').TooltipProps<number, string>;
-const PdProfitTooltip: React.FC<RTooltipProps> = ({ active, label, payload }) => {
-  if (!active || !payload || !payload.length) return null;
-  const sum = Number(payload[0]?.payload?.profit) || 0;
-  return (
-    <Box className="tooltip-card tooltip-card--funds">
-      <Typography variant="body2" className="tooltip-line">Дата: {String(label)}</Typography>
-      <Typography variant="body2" className="tooltip-line">{fmtMoney(sum)}</Typography>
-    </Box>
-  );
-};
-
-type SectionFormProps = {
-  isAdmin: boolean;
-  section: ProjectRow; // id=0 → новый
-  groupingOptions: string[];
-  onClose: () => void;
-  onSave: (s: ProjectRow, mode: 'create' | 'update') => void | Promise<void>;
-  onRemove: (id: number) => void | Promise<void>;
-};
-
-const SectionDialog: React.FC<SectionFormProps> = ({ isAdmin, section, groupingOptions, onClose, onSave, onRemove }) => {
-  const [form, setForm] = useState<ProjectRow>(section);
-  const [saving, setSaving] = useState(false);
-  const isNew = !form.id;
-
-  const { data: users = [] } = useQuery<User[]>({
-    queryKey: ['users'],
-    enabled: isAdmin,
-    queryFn: () => api<User[]>(`${API}/users`),
-    staleTime: STALE_15M,
-    refetchOnWindowFocus: false,
-  });
-
-  const selectedUser = users.find((u) => u.id === form.responsible) ?? null;
-
-  const doSave = async () => {
-    setSaving(true);
-    try {
-      await onSave(form, isNew ? 'create' : 'update');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      fullWidth
-      maxWidth="md"
-      PaperProps={{ className: 'dialog-paper' }}
-      disableRestoreFocus
-      keepMounted
-    >
-      <DialogTitle className="with-bottom-border">
-        {isNew ? 'Новый раздел' : 'Редактировать раздел'}
-      </DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2}>
-          <TextField
-            label="Раздел"
-            value={form.section}
-            onChange={(e) => setForm({ ...form, section: e.target.value })}
-            className="dark-input"
-          />
-
-          <Autocomplete
-            freeSolo
-            options={groupingOptions}
-            value={form.grouping || ''}
-            onInputChange={(_, newValue) => {
-              setForm({ ...form, grouping: newValue });
-            }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Группировка"
-                className="dark-input"
-              />
-            )}
-          />
-
-          <TextField
-            label="Тип операции"
-            select
-            value={form.direction}
-            onChange={(e) => setForm({ ...form, direction: e.target.value as ProjectRow['direction'] })}
-            className="dark-input"
-          >
-            <MenuItem value="нам должны">нам должны</MenuItem>
-            <MenuItem value="мы должны">мы должны</MenuItem>
-          </TextField>
-
-          <Autocomplete
-            options={users}
-            getOptionLabel={(u) => u.nickname || u.login}
-            value={selectedUser}
-            onChange={(_, val) =>
-              setForm({
-                ...form,
-                responsible: val ? val.id : null,
-                responsible_nickname: val ? (val.nickname || val.login) : '',
-              })
-            }
-            renderInput={(params) => <TextField {...params} label="Ответственный" className="dark-input" />}
-          />
-
-          <TextField
-            label="Сумма договора"
-            type="number"
-            value={form.amount}
-            onChange={(e) => setForm({ ...form, amount: +e.target.value })}
-            className="dark-input"
-          />
-        </Stack>
-      </DialogContent>
-      <DialogActions className="with-top-border">
-        {!isNew && (
-          <Button
-            color="error"
-            startIcon={<DeleteIcon />}
-            onClick={() => {
-              if (window.confirm('Удалить раздел?')) onRemove(form.id);
-            }}
-            className="btn-text-no-transform"
-          >
-            Удалить
-          </Button>
-        )}
-        <Box className="flex-grow" />
-        <Button onClick={onClose} disabled={saving} className="btn-text-no-transform">
-          Отмена
-        </Button>
-        <Button
-          variant="contained"
-          onClick={doSave}
-          disabled={saving || !form.section?.trim()}
-          size="small"
-          className="btn-contained"
-        >
-          {saving ? 'Сохранение…' : 'Сохранить'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-};
-
-/* -------------------- TxForm -------------------- */
-type TxFormProps = {
-  value: Partial<Transaction>;
-  onChange: (v: Partial<Transaction>) => void;
-  users: User[];
-  sectionRows: ProjectRow[];
-  titleContractor: string;
-  titleProject: string;
-};
-
-const TxForm: React.FC<TxFormProps> = ({ value, onChange, users, sectionRows, titleContractor, titleProject }) => {
-  const selectedSection = useMemo(() => {
-    const pid = toIntOrNull(value.project_id);
-    return sectionRows.find(s => Number(s.id) === Number(pid)) ?? null;
-  }, [value.project_id, sectionRows]);
-
-  return (
-    <Stack spacing={2}>
-      <Autocomplete
-        options={sectionRows}
-        getOptionLabel={(s) => s.section || '—'}
-        value={selectedSection}
-        onChange={(_, s) => onChange({
-          ...value,
-          project_id: s ? s.id : null,
-          section: s ? s.section : '',
-          contractor: titleContractor,
-          project: titleProject,
-        })}
-        renderInput={(params) => <TextField {...params} label="Раздел (по проекту)" className="dark-input" />}
-        isOptionEqualToValue={(o, v) => o.id === v.id}
-      />
-
-      <TextField
-        select
-        label="Тип операции"
-        value={normalizeOp(value.operationType)}
-        onChange={(e) => onChange({ ...value, operationType: e.target.value as OperationType })}
-        className="dark-input"
-      >
-        <MenuItem value="Доход">Доход</MenuItem>
-        <MenuItem value="Расход">Расход</MenuItem>
-      </TextField>
-
-      <TextField
-        label="Дата"
-        type="date"
-        value={value.date ?? ''}
-        onChange={(e) => onChange({ ...value, date: e.target.value })}
-        InputLabelProps={{ shrink: true }}
-        className="dark-input"
-      />
-
-      <TextField
-        label="Сумма"
-        type="number"
-        value={value.total ?? ''}
-        onChange={(e) => onChange({ ...value, total: +e.target.value })}
-        className="dark-input"
-      />
-
-      <TextField
-        label="Примечание"
-        value={value.note ?? ''}
-        onChange={(e) => onChange({ ...value, note: e.target.value })}
-        multiline rows={2}
-        className="dark-input"
-      />
-
-      <TextField
-        select
-        label="Счёт"
-        value={value.responsible ?? ''}
-        onChange={(e) => onChange({ ...value, responsible: e.target.value })}
-        className="dark-input"
-      >
-        {users.map((u) => (
-          <MenuItem key={u.id} value={u.login}>
-            {u.nickname ? `${u.nickname} (${u.login})` : u.login}
-          </MenuItem>
-        ))}
-      </TextField>
-    </Stack>
-  );
-};
 
 export default ProjectDetailPage;

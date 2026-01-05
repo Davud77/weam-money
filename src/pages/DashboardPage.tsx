@@ -1,104 +1,52 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom'; // <--- Добавлен импорт
 import {
-  Box,
-  Typography,
-  Stack,
-  Chip,
-  Popover,
-  Checkbox,
-  FormControlLabel,
-  CircularProgress,
-  TableContainer,
-  Table,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableBody,
-  Paper,
-} from '@mui/material';
-import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
+  AreaChart, Area, BarChart, Bar, LineChart, Line, CartesianGrid, XAxis, YAxis,
+  Tooltip as RechartsTooltip, ResponsiveContainer
 } from 'recharts';
-import { LocalizationProvider } from '@mui/x-date-pickers';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
-import 'dayjs/locale/ru';
 import dayjs, { Dayjs } from 'dayjs';
-// ИЗМЕНЕНИЕ: Импортируем keepPreviousData
+import 'dayjs/locale/ru';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { ChevronDown, Check, X, Calendar as CalendarIcon, Users, LayoutGrid } from 'lucide-react';
+
 import { api, me } from '../lib/api';
 import { fmtMoney, fmtPercent } from '../lib/format';
 
-/* ---------- типы ---------- */
-type PresetKey =
-  | 'currentMonth'
-  | 'currentQuarter'
-  | 'currentYear'
-  | 'prevMonth'
-  | 'prevQuarter'
-  | 'prevYear'
-  | 'allTime'
-  | 'custom';
+/* ---------- Типы ---------- */
+type PresetKey = 'currentMonth' | 'currentQuarter' | 'currentYear' | 'prevMonth' | 'prevQuarter' | 'prevYear' | 'allTime' | 'custom';
 
 type DayEntry = {
   date: string;
-  incomePlan: number;
-  expensePlan: number;
-  profitPlan: number;
-  incomeFact: number;
-  expenseFact: number;
-  profitFact: number;
-  incomeTotal: number;
-  expenseTotal: number;
-  profitTotal: number;
-  project?: string | null;
-  section?: string | null;
-  note?: string | null;
+  incomePlan: number; expensePlan: number; profitPlan: number;
+  incomeFact: number; expenseFact: number; profitFact: number;
+  incomeTotal: number; expenseTotal: number; profitTotal: number;
+  project?: string | null; section?: string | null; note?: string | null;
 };
 
 type Kpi = { income: number; expense: number; profit: number; profitability: number };
 
-/** Доп. тип для тултипа расходов (контрагенты) */
 type ExpenseContractorDatum = {
-  name: string;
-  value: number;
-  project?: string | null;
-  section?: string | null;
-  description?: string | null;
+  name: string; value: number;
+  project?: string | null; section?: string | null; description?: string | null;
 };
 
-// НОВЫЙ ТИП: Данные для таблицы пользователей
-type UserSummaryData = {
-  userId: number;
-  income: number;  // Заработок (доход)
-  balance: number; // Остаток
-};
+type UserSummaryData = { userId: number; income: number; balance: number; name?: string };
 
 type DashboardApiResponse = {
   contractorsMap: Record<string, string[]>;
-  allUsers: number[]; // user ids
+  allUsers: number[];
   kpi: { plan: Kpi; fact: Kpi; total: Kpi };
   lineData: DayEntry[];
   topIncomeClients: { name: string; value: number }[];
   topExpenseContractors: ExpenseContractorDatum[];
   profitByProject: { name: string; profit: number }[];
   profitabByProject: { name: string; profitability: number }[];
-  userSummary: UserSummaryData[]; // НОВОЕ ПОЛЕ В ОТВЕТЕ API
+  userSummary: UserSummaryData[];
 };
 
 type ResponsibleUser = { id: number; login: string; nickname?: string | null };
 
-/* ---------- константы ---------- */
+/* ---------- Хелперы дат ---------- */
 const quarterBounds = (d: Dayjs) => {
   const qStartMonth = d.month() - (d.month() % 3);
   const start = dayjs(d).month(qStartMonth).startOf('month');
@@ -124,144 +72,118 @@ const getPresetRange = (k: PresetKey): { start: Dayjs | null; end: Dayjs | null 
 };
 
 const presetLabel: Record<PresetKey, string> = {
-  currentMonth: 'Текущий месяц',
-  currentQuarter: 'Текущий квартал',
-  currentYear: 'Текущий год',
-  prevMonth: 'Прошлый месяц',
-  prevQuarter: 'Прошлый квартал',
-  prevYear: 'Прошлый год',
-  allTime: 'Все время',
-  custom: 'Период',
+  currentMonth: 'Текущий месяц', currentQuarter: 'Текущий квартал', currentYear: 'Текущий год',
+  prevMonth: 'Прошлый месяц', prevQuarter: 'Прошлый квартал', prevYear: 'Прошлый год',
+  allTime: 'Все время', custom: 'Период',
 };
 
-/* ---------- tooltip форматтеры для Recharts ---------- */
-const tooltipMoneyNoKey = (value: any) => [fmtMoney(Number(value) || 0), ''] as any;
-const tooltipPctNoKey = (value: any) => [fmtPercent(Number(value) || 0), ''] as any;
+/* ---------- Компоненты KPI и Тултипов ---------- */
 
-/* ---------- KPI карточка ---------- */
-type KpiCardProps = {
-  title: string;
-  value: number;
-  unit?: string;
-  data: number[];
-  subLines?: string[];
-};
+const KpiCard: React.FC<{ title: string; value: number; unit?: string; data: number[]; subLines?: string[] }> = ({ title, value, unit = '₽', data, subLines }) => (
+  <div className="card kpi-card block">
+    <div className="kpi-header">
+      <div className="kpi-title">{title}</div>
+      <div className="kpi-value">
+        {(Number(value) || 0).toLocaleString('ru-RU')} <span className="text-soft text-sm">{unit}</span>
+      </div>
+    </div>
+    
+    <div className="kpi-sublines">
+      {subLines?.map((l) => <div key={l} className="kpi-subl">{l}</div>)}
+    </div>
 
-const KpiCard: React.FC<KpiCardProps> = ({ title, value, unit = '₽', data, subLines }) => (
-  <Box className="kpi-card">
-    <Typography variant="subtitle2" className="kpi-title">{title.toUpperCase()}</Typography>
-    <Typography variant="h5" className="kpi-value">
-      {(Number(value) || 0).toLocaleString('ru-RU')} {unit}
-    </Typography>
-    {subLines?.map((l) => (
-      <Typography key={l} variant="caption" className="kpi-subl">{l}</Typography>
-    ))}
     {data.length > 1 && (
-      <Box className="spark-container">
-        <ResponsiveContainer>
-          <AreaChart data={data.map((y, i) => ({ x: i, y }))} className="spark-chart">
+      <div className="spark-container">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data.map((y, i) => ({ x: i, y }))}>
             <defs>
               <linearGradient id="sparkGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop className="spark-stop-1" offset="5%" stopOpacity={0.5} />
-                <stop className="spark-stop-2" offset="95%" stopOpacity={0} />
+                <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3} />
+                <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <Area
-              type="monotone"
-              dataKey="y"
-              className="spark-area"
-              strokeWidth={2}
-              isAnimationActive={false}
-              fill="url(#sparkGradient)"
-            />
+            <Area type="monotone" dataKey="y" stroke="var(--primary)" strokeWidth={2} fill="url(#sparkGradient)" isAnimationActive={false} />
           </AreaChart>
         </ResponsiveContainer>
-      </Box>
+      </div>
     )}
-  </Box>
+  </div>
 );
 
-/* ---------- Кастомные тултипы ---------- */
-type ReValue = number | string | Array<number | string>;
-type ReName = string;
-type RTooltipProps = import('recharts').TooltipProps<ReValue, ReName>;
-
-/* Унифицированный простой тултип для bar-чартов */
-const SimpleBarTooltip: React.FC<RTooltipProps & { mode: 'money' | 'percent' }> = ({ active, label, payload, mode }) => {
+const CustomTooltip = ({ active, payload, label, mode = 'money' }: any) => {
   if (!active || !payload || !payload.length) return null;
-  const v = Number(payload[0].value) || 0;
-  const text = mode === 'percent' ? fmtPercent(v) : fmtMoney(v);
+  const val = Number(payload[0].value) || 0;
+  
+  // Особая логика для FundsTooltip
+  if (payload[0].payload.incomeTotal !== undefined) {
+    const p = payload[0].payload as DayEntry;
+    return (
+      <div className="chart-tooltip">
+        <div className="tooltip-date">{dayjs(String(label)).format('DD.MM.YYYY')}</div>
+        <div className="tooltip-val">{fmtMoney(val)}</div>
+        {p.project && <div className="tooltip-sub">{p.project} {p.section ? `/ ${p.section}` : ''}</div>}
+        {p.note && <div className="tooltip-note">{p.note.length > 50 ? p.note.slice(0, 50) + '...' : p.note}</div>}
+      </div>
+    );
+  }
+
+  // Логика для BarChart
   return (
-    <Box className="tooltip-card tooltip-card--bar">
-      <Typography variant="body2" className="tooltip-line">{String(label)}</Typography>
-      <Typography variant="body2" className="tooltip-line">{text}</Typography>
-    </Box>
+    <div className="chart-tooltip">
+      <div className="tooltip-label">{label}</div>
+      <div className="tooltip-val">{mode === 'percent' ? fmtPercent(val) : fmtMoney(val)}</div>
+    </div>
   );
 };
 
-/* Контрагенты с наибольшими расходами — привели стиль к единому */
-const TopExpenseTooltip: React.FC<RTooltipProps> = ({ active, label, payload }) => {
-  if (!active || !payload || !payload.length) return null;
-  const p = (payload[0].payload || {}) as ExpenseContractorDatum;
-  const sum = Number(payload[0].value) || 0;
-
-  return (
-    <Box className="tooltip-card tooltip-card--bar">
-      <Typography variant="body2" className="tooltip-line">{String(label)}</Typography>
-      <Typography variant="body2" className="tooltip-line">{fmtMoney(sum)}</Typography>
-      {p.project ? <Typography variant="body2" className="tooltip-line">{p.project}</Typography> : null}
-      {p.section ? <Typography variant="body2" className="tooltip-line">{p.section}</Typography> : null}
-      {p.description ? <Typography variant="body2" className="tooltip-line">{p.description}</Typography> : null}
-    </Box>
-  );
-};
-
-const FundsTooltip: React.FC<RTooltipProps> = ({ active, label, payload }) => {
-  if (!active || !payload || !payload.length) return null;
-  const sum = Number(payload[0].value) || 0;
-  const p = (payload[0].payload || {}) as DayEntry;
-  const proj = (p.project || '').toString().trim();
-  const sec  = (p.section || '').toString().trim();
-  const note = (p.note || '').toString().trim();
-
-  const projectSection = [proj, sec].filter(Boolean).join(', ');
-  const displayNote = note.length > 40 ? `${note.slice(0, 40)}\n${note.slice(40)}` : note;
-
-  return (
-    <Box className="tooltip-card tooltip-card--funds">
-      <Typography variant="body2" className="tooltip-line">
-        Дата: {dayjs(String(label)).format('DD.MM.YYYY')}
-      </Typography>
-      <Typography variant="body2" className="tooltip-line">{fmtMoney(sum)}</Typography>
-      {projectSection ? (
-        <Typography variant="body2" className="tooltip-line">{projectSection}</Typography>
-      ) : null}
-      {displayNote ? (
-        <Typography variant="body2" className="tooltip-line">{displayNote}</Typography>
-      ) : null}
-    </Box>
-  );
-};
-
-/* ---------- страница ---------- */
-const STALE_15M = 15 * 60 * 1000;
-
+/* ---------- Страница ---------- */
 const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showError }) => {
-  /* фильтры state */
-  const [projAnchor, setProjAnchor] = useState<HTMLElement | null>(null);
-  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
-
-  const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
+  // --- Состояния фильтров ---
+  const [activeDropdown, setActiveDropdown] = useState<'date' | 'users' | 'projects' | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 }); // <--- Координаты для портала
+  
+  // Date state
   const [preset, setPreset] = useState<PresetKey>('allTime');
-  const [dateRange, setDateRange] = useState<{ start: Dayjs | null; end: Dayjs | null }>(
-    () => getPresetRange('allTime'),
-  );
+  const [dateRange, setDateRange] = useState<{ start: Dayjs | null; end: Dayjs | null }>(() => getPresetRange('allTime'));
 
-  const [usersAnchor, setUsersAnchor] = useState<HTMLElement | null>(null);
+  // Filter state
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
   const [selectedUsers, setSelectedUsers] = useState<Set<number>>(new Set());
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  /* параметры запроса для /api/dashboard */
+  // Логика переключения дропдауна с расчетом координат
+  const toggleDropdown = (key: 'date' | 'users' | 'projects', e: React.MouseEvent<HTMLButtonElement>) => {
+    if (activeDropdown === key) {
+      setActiveDropdown(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 8, // Отступ снизу, как было margin-top: 8px
+        left: rect.left
+      });
+      setActiveDropdown(key);
+    }
+  };
+
+  // Закрытие дропдаунов при клике вне
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      // Проверяем клик: был ли он внутри панели фильтров ИЛИ внутри самого открытого портала
+      const clickedInsideFilter = dropdownRef.current && dropdownRef.current.contains(target);
+      const clickedInsidePortal = target.closest('.dropdown-portal-root'); // Класс-маркер для портала
+
+      if (!clickedInsideFilter && !clickedInsidePortal) {
+        setActiveDropdown(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  /* --- API Query --- */
   const params = useMemo(() => {
     const usp = new URLSearchParams();
     if (dateRange.start) usp.set('start', dateRange.start.format('YYYY-MM-DD'));
@@ -269,421 +191,330 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
     if (selectedProjects.size) usp.set('projects', Array.from(selectedProjects).join(','));
     if (selectedUsers.size)    usp.set('users', Array.from(selectedUsers).join(','));
     return usp.toString();
-  }, [dateRange.start, dateRange.end, selectedProjects, selectedUsers]);
+  }, [dateRange, selectedProjects, selectedUsers]);
 
-  /* me — только для UX (скрывать кнопки и т.п.). Решение — на бэке */
-  useQuery({
-    queryKey: ['me'],
-    queryFn: () => me(),
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
-  });
+  useQuery({ queryKey: ['me'], queryFn: () => me(), staleTime: 300000, refetchOnWindowFocus: false });
 
-  /* загрузка агрегатов */
-  const dashboardQuery = useQuery<DashboardApiResponse>({
+  const { data, isFetching, isError, error } = useQuery<DashboardApiResponse>({
     queryKey: ['dashboard-summary', params],
     queryFn: () => api(`/api/dashboard?${params}`),
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
   });
 
-  /* справочник пользователей (label = nickname | login) */
   const usersQuery = useQuery<ResponsibleUser[]>({
     queryKey: ['responsible-list'],
     queryFn: () => api('/api/responsible'),
-    staleTime: STALE_15M,
+    staleTime: 900000,
     refetchOnWindowFocus: false,
   });
 
-  const isFetching = dashboardQuery.isFetching || usersQuery.isFetching;
-  const isError = dashboardQuery.isError || usersQuery.isError;
-  const error = (dashboardQuery.error as Error) || (usersQuery.error as Error);
+  if (isError && error) showError(error.message);
 
-  if (isError && error) {
-    showError(error.message);
-  }
-
-  const data = dashboardQuery.data;
-  
-  // По умолчанию выбираем всех пользователей и все проекты при первой загрузке
-  React.useEffect(() => {
-    if (data && isInitialLoad && dashboardQuery.isSuccess) {
+  // Инициализация фильтров "Выбрать всё"
+  useEffect(() => {
+    if (data && isInitialLoad) {
       const allUserIds = (data.allUsers || []).filter(Number.isFinite);
       setSelectedUsers(new Set(allUserIds));
-
       const allProjectNames = Object.values(data.contractorsMap || {}).flat();
       setSelectedProjects(new Set(allProjectNames));
-
       setIsInitialLoad(false);
     }
-  }, [data, isInitialLoad, dashboardQuery.isSuccess]);
+  }, [data, isInitialLoad]);
 
+  // Подготовка данных
   const contractorsMap = data?.contractorsMap || {};
-
-  const allUserIds: number[] = (data?.allUsers || []).filter((x) => Number.isFinite(x));
-  const userDirectory = new Map<number, string>(
-    (usersQuery.data || []).map((u) => [u.id, (u.nickname && u.nickname.trim()) || u.login || String(u.id)])
-  );
-  const userOptions: { id: number; label: string }[] = allUserIds.map((id) => ({
-    id,
-    label: userDirectory.get(id) || String(id),
-  }));
-
-  const allProjectNames = useMemo(() => Object.values(contractorsMap).flat(), [contractorsMap]);
-  const allProjectsCount = allProjectNames.length;
+  const allUserIds = (data?.allUsers || []).filter(Number.isFinite);
+  const userDirectory = new Map((usersQuery.data || []).map(u => [u.id, u.nickname || u.login]));
+  const userOptions = allUserIds.map(id => ({ id, label: userDirectory.get(id) || String(id) }));
+  const allProjectNames = Object.values(contractorsMap).flat();
 
   const lineData = data?.lineData || [];
   const plan = data?.kpi?.plan || { income: 0, expense: 0, profit: 0, profitability: 0 };
   const fact = data?.kpi?.fact || { income: 0, expense: 0, profit: 0, profitability: 0 };
   const total = data?.kpi?.total || { income: 0, expense: 0, profit: 0, profitability: 0 };
-
   const last = lineData.length ? lineData[lineData.length - 1] : null;
-  const revenue = total.income;
-  const expense = total.expense;
   const funds = last ? last.incomeTotal - last.expenseTotal : 0;
-  const profitability = total.profitability;
+  
+  const spark = (m: keyof DayEntry) => lineData.slice(-20).map(d => d[m] as number);
 
-  const spark = (m: keyof DayEntry) => lineData.slice(-20).map((d) => d[m] as number);
-
-  // НОВЫЙ БЛОК: Подготовка данных для таблицы пользователей
   const userSummaryData = useMemo(() => {
-    if (!data?.userSummary || !userDirectory.size) {
-      return [];
-    }
-    return data.userSummary.map((summary) => ({
-      ...summary,
-      name: userDirectory.get(summary.userId) || String(summary.userId),
-    }));
+    if (!data?.userSummary) return [];
+    return data.userSummary.map(s => ({ ...s, name: userDirectory.get(s.userId) || String(s.userId) }));
   }, [data?.userSummary, userDirectory]);
 
-  /* ---------- UI ---------- */
+  /* --- Рендер --- */
   return (
-    <Box className="root dashboard-page">
-      {/* Header */}
-      <Box className="header dashboard-header">
-        <Typography variant="h6" className="title dashboard-title">Дашборд</Typography>
-      </Box>
+    <div className="page-container dashboard-page">
+      <div className="header">
+        <h2 className="text-xl font-bold m-0">Дашборд</h2>
+      </div>
 
-      {/* Контент */}
-      <Box className="content dashboard-content">
-        {/* Фильтры */}
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Chip
-            className="chip chip--clickable"
-            label={
-              preset === 'custom'
-                ? `${dateRange.start ? dateRange.start.format('DD.MM.YYYY') : '...'} — ${dateRange.end ? dateRange.end.format('DD.MM.YYYY') : '...'}`
+      <div className="content">
+
+      {/* Фильтры */}
+        <div className="filtr" ref={dropdownRef}>
+          
+          {/* Фильтр: Дата */}
+          <div className="relative">
+            <button 
+              className={`chip-btn ${activeDropdown === 'date' ? 'active' : ''}`}
+              onClick={(e) => toggleDropdown('date', e)} // <-- Используем toggleDropdown
+            >
+              <CalendarIcon size={16} />
+              {preset === 'custom' 
+                ? `${dateRange.start?.format('DD.MM.YY') ?? '...'} — ${dateRange.end?.format('DD.MM.YY') ?? '...'}`
                 : presetLabel[preset]
-            }
-            onClick={(e) => setDateAnchor(e.currentTarget)}
-          />
-          <Chip
-            className="chip chip--clickable"
-            label={
-              !data || selectedUsers.size === 0 || selectedUsers.size === allUserIds.length
-                ? 'Все пользователи'
-                : `Пользователи (${selectedUsers.size})`
-            }
-            onClick={(e) => setUsersAnchor(e.currentTarget)}
-          />
-          <Chip
-            className="chip chip--clickable"
-            label={
-              !data || selectedProjects.size === 0 || selectedProjects.size === allProjectsCount
-                ? 'Все проекты'
-                : `Проекты (${selectedProjects.size})`
-            }
-            onClick={(e) => setProjAnchor(e.currentTarget)}
-          />
-        </Stack>
-
-        {/* Popover период */}
-        <Popover
-          open={Boolean(dateAnchor)}
-          anchorEl={dateAnchor}
-          onClose={() => setDateAnchor(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-          className="dashboard-popover"
-        >
-          <Box className="popover-body popover-body--wide">
-            <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ru">
-              <Stack direction="row" spacing={2}>
-                <DatePicker
-                  label="От"
-                  value={dateRange.start}
-                  onChange={(v) => { setDateRange((r) => ({ ...r, start: v })); setPreset('custom'); }}
-                />
-                <DatePicker
-                  label="До"
-                  value={dateRange.end}
-                  onChange={(v) => { setDateRange((r) => ({ ...r, end: v })); setPreset('custom'); }}
-                />
-              </Stack>
-            </LocalizationProvider>
-
-            <Stack direction="row" flexWrap="wrap" className="chip-grid mt-1">
-              {(['currentMonth','currentQuarter','currentYear','prevMonth','prevQuarter','prevYear','allTime'] as PresetKey[])
-                .map((k) => (
-                <Chip
-                  key={k}
-                  label={presetLabel[k]}
-                  size="small"
-                  onClick={() => { setPreset(k); setDateRange(getPresetRange(k)); }}
-                  className={`chip chip--small ${preset === k ? 'chip--active' : ''}`}
-                />
-              ))}
-            </Stack>
-          </Box>
-        </Popover>
-
-        {/* Popover пользователи */}
-        <Popover
-          open={Boolean(usersAnchor)}
-          anchorEl={usersAnchor}
-          onClose={() => setUsersAnchor(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        >
-          <Box className="popover-body popover-body--scroll max-h-360">
-            {(!data || userOptions.length === 0) && (
-              <Typography variant="body2" color="text.secondary">Пользователи не найдены.</Typography>
-            )}
-            <Stack direction="column" spacing={0.5} className="no-margin">
-              {userOptions.map(({ id, label }) => (
-                <FormControlLabel
-                  key={id}
-                  control={
-                    <Checkbox
-                      checked={selectedUsers.has(id)}
-                      onChange={(e) =>
-                        setSelectedUsers((prev) => {
-                          const next = new Set(prev);
-                          e.target.checked ? next.add(id) : next.delete(id);
-                          return next;
-                        })
-                      }
+              }
+              <ChevronDown size={14} />
+            </button>
+            
+            {activeDropdown === 'date' && createPortal( // <-- Рендерим в портал
+              <div 
+                className="dropdown-menu p-3 dropdown-portal-root" 
+                style={{ 
+                  position: 'fixed', 
+                  top: dropdownPos.top, 
+                  left: dropdownPos.left, 
+                  zIndex: 9999,
+                  marginTop: 0 // Сброс отступа, так как позиционируем точно
+                }}
+              >
+                <div className="flex gap-2 mb-3">
+                  <div className="input-group flex-1 mb-0">
+                    <label className="input-label">От</label>
+                    <input 
+                      type="date" 
+                      className="input sm" 
+                      value={dateRange.start ? dateRange.start.format('YYYY-MM-DD') : ''}
+                      onChange={(e) => {
+                        const d = e.target.value ? dayjs(e.target.value) : null;
+                        setDateRange(prev => ({ ...prev, start: d }));
+                        setPreset('custom');
+                      }}
                     />
-                  }
-                  label={label}
-                  className="form-item--compact"
-                />
-              ))}
-            </Stack>
-
-            {userOptions.length > 0 && (
-              <Stack direction="row" spacing={1} className="mt-1">
-                <Chip
-                  label="Выбрать всех"
-                  size="small"
-                  onClick={() => setSelectedUsers(new Set(allUserIds))}
-                  className="chip chip--small"
-                />
-                <Chip
-                  label="Очистить"
-                  size="small"
-                  onClick={() => setSelectedUsers(new Set())}
-                  className="chip chip--small"
-                />
-              </Stack>
+                  </div>
+                  <div className="input-group flex-1 mb-0">
+                    <label className="input-label">До</label>
+                    <input 
+                      type="date" 
+                      className="input sm"
+                      value={dateRange.end ? dateRange.end.format('YYYY-MM-DD') : ''}
+                      onChange={(e) => {
+                        const d = e.target.value ? dayjs(e.target.value) : null;
+                        setDateRange(prev => ({ ...prev, end: d }));
+                        setPreset('custom');
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="actions-block actions-block-wrap">
+                  {(['currentMonth','currentQuarter','currentYear','prevMonth','prevQuarter','prevYear','allTime'] as PresetKey[]).map(k => (
+                    <button 
+                      key={k} 
+                      className={`btn ${preset === k ? 'active' : ''}`}
+                      onClick={() => { setPreset(k); setDateRange(getPresetRange(k)); setActiveDropdown(null); }}
+                    >
+                      {presetLabel[k]}
+                    </button>
+                  ))}
+                </div>
+              </div>,
+              document.body // <-- Цель портала
             )}
-          </Box>
-        </Popover>
+          </div>
 
-        {/* Popover проекты */}
-        <Popover
-          open={Boolean(projAnchor)}
-          anchorEl={projAnchor}
-          onClose={() => setProjAnchor(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        >
-          <Box className="popover-body popover-body--scroll">
-            {Object.entries(contractorsMap).map(([contractor, projects]) => (
-              <Box key={contractor} className="contractor-block">
-                <Typography variant="subtitle2" className="contractor-title">{contractor}</Typography>
-                {projects.map((proj) => (
-                  <FormControlLabel
-                    key={`${contractor}:${proj}`}
-                    control={
-                      <Checkbox
-                        checked={selectedProjects.has(proj)}
-                        onChange={(e) =>
-                          setSelectedProjects((prev) => {
-                            const next = new Set(prev);
-                            e.target.checked ? next.add(proj) : next.delete(proj);
-                            return next;
-                          })
-                        }
-                      />
-                    }
-                    label={proj}
-                    className="form-item--compact"
-                  />
+          {/* Фильтр: Пользователи */}
+          <div className="relative">
+            <button 
+              className={`chip-btn ${activeDropdown === 'users' ? 'active' : ''}`}
+              onClick={(e) => toggleDropdown('users', e)}
+            >
+              <Users size={16} />
+              {selectedUsers.size === allUserIds.length ? 'Все пользователи' : `Выбрано: ${selectedUsers.size}`}
+              <ChevronDown size={14} />
+            </button>
+
+            {activeDropdown === 'users' && createPortal(
+              <div 
+                className="dropdown-menu p-2 dropdown-portal-root" 
+                style={{ 
+                  position: 'fixed', 
+                  top: dropdownPos.top, 
+                  left: dropdownPos.left, 
+                  zIndex: 9999,
+                  width: 250, 
+                  maxHeight: 400, 
+                  overflowY: 'auto',
+                  marginTop: 0
+                }}
+              >
+                <div className="actions-block">
+                    <button className="btn" onClick={() => setSelectedUsers(new Set(allUserIds))}>Все</button>
+                    <button className="btn" onClick={() => setSelectedUsers(new Set())}>Очистить</button>
+                </div>
+                {userOptions.length === 0 && <div className="text-sm text-soft p-2">Нет данных</div>}
+                {userOptions.map(u => (
+                  <label key={u.id} className="dropdown-item checkbox-label">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedUsers.has(u.id)}
+                      onChange={(e) => {
+                        const next = new Set(selectedUsers);
+                        e.target.checked ? next.add(u.id) : next.delete(u.id);
+                        setSelectedUsers(next);
+                      }}
+                    />
+                    <span>{u.label}</span>
+                  </label>
                 ))}
-              </Box>
-            ))}
-             <Stack direction="row" spacing={1} className="mt-1">
-                <Chip
-                  label="Выбрать все"
-                  size="small"
-                  onClick={() => setSelectedProjects(new Set(allProjectNames))}
-                  className="chip chip--small"
-                />
-                <Chip
-                  label="Очистить"
-                  size="small"
-                  onClick={() => setSelectedProjects(new Set())}
-                  className="chip chip--small"
-                />
-              </Stack>
-          </Box>
-        </Popover>
+              </div>,
+              document.body
+            )}
+          </div>
 
-        {isFetching && (
-          <Box className="loading-inline">
-            <CircularProgress size={18} />
-            <Typography variant="body2" color="text.secondary">Загрузка данных…</Typography>
-          </Box>
-        )}
+          {/* Фильтр: Проекты */}
+          <div className="relative">
+            <button 
+              className={`chip-btn ${activeDropdown === 'projects' ? 'active' : ''}`}
+              onClick={(e) => toggleDropdown('projects', e)}
+            >
+              <LayoutGrid size={16} />
+              {selectedProjects.size === allProjectNames.length ? 'Все проекты' : `Выбрано: ${selectedProjects.size}`}
+              <ChevronDown size={14} />
+            </button>
 
-        {/* KPI */}
-        <Stack direction="row" useFlexGap spacing={2}>
-          {[
-            ['Выручка', revenue, spark('incomeTotal'), [`План: ${fmtMoney(plan.income)}`, `Факт: ${fmtMoney(fact.income)}`]],
-            ['Расходы', expense, spark('expenseTotal'), [`План: ${fmtMoney(plan.expense)}`, `Факт: ${fmtMoney(fact.expense)}`]],
-            ['Деньги бизнеса', funds, spark('incomeTotal'), [`План: ${fmtMoney(plan.profit)}`, `Факт: ${fmtMoney(fact.profit)}`]],
-            ['Рентабельность', profitability, spark('profitTotal'), [`План: ${fmtPercent(plan.profitability)}`, `Факт: ${fmtPercent(fact.profitability)}`], '%'],
-          ].map(([title, val, dataSeries, lines, unit]) => (
-            <Box key={title as string} className="kpi-col">
-              <KpiCard
-                title={title as string}
-                value={val as number}
-                data={dataSeries as number[]}
-                subLines={lines as string[]}
-                unit={unit as string | undefined}
-              />
-            </Box>
-          ))}
-        </Stack>
+            {activeDropdown === 'projects' && createPortal(
+              <div 
+                className="dropdown-menu p-2 dropdown-portal-root" 
+                style={{ 
+                  position: 'fixed', 
+                  top: dropdownPos.top, 
+                  left: dropdownPos.left, 
+                  zIndex: 9999,
+                  width: 300, 
+                  maxHeight: 400, 
+                  overflowY: 'auto',
+                  marginTop: 0
+                }}
+              >
+                <div className="actions-block">
+                    <button className="btn" onClick={() => setSelectedProjects(new Set(allProjectNames))}>Все</button>
+                    <button className="btn" onClick={() => setSelectedProjects(new Set())}>Очистить</button>
+                </div>
+                {Object.entries(contractorsMap).map(([contr, projs]) => (
+                  <div key={contr} className="mb-3">
+                    <div className="text-xs font-bold text-soft mb-1 uppercase tracking-wider">{contr}</div>
+                    {projs.map(p => (
+                        <label key={p} className="dropdown-item checkbox-label">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedProjects.has(p)}
+                            onChange={(e) => {
+                              const next = new Set(selectedProjects);
+                              e.target.checked ? next.add(p) : next.delete(p);
+                              setSelectedProjects(next);
+                            }}
+                          />
+                          <span className="truncate">{p}</span>
+                        </label>
+                    ))}
+                  </div>
+                ))}
+              </div>,
+              document.body
+            )}
+          </div>
 
-        {/* Деньги на счетах */}
-        <Box className="chart-card chart-card--lg">
-          <Typography variant="subtitle2" className="block-title">ДЕНЬГИ НА СЧЁТАХ</Typography>
+          {isFetching && <div className="text-sm text-soft self-center animate-pulse">Обновление...</div>}
+        </div>
+
+
+      
+
+        {/* KPI Cards Grid */}
+        <div className="kpi-block">
+          <KpiCard title="Выручка" value={total.income} data={spark('incomeTotal')} 
+            subLines={[`План: ${fmtMoney(plan.income)}`, `Факт: ${fmtMoney(fact.income)}`]} />
+          <KpiCard title="Расходы" value={total.expense} data={spark('expenseTotal')} 
+            subLines={[`План: ${fmtMoney(plan.expense)}`, `Факт: ${fmtMoney(fact.expense)}`]} />
+          <KpiCard title="Деньги бизнеса" value={funds} data={spark('incomeTotal')} 
+            subLines={[`План: ${fmtMoney(plan.profit)}`, `Факт: ${fmtMoney(fact.profit)}`]} />
+          <KpiCard title="Рентабельность" value={total.profitability} unit="%" data={spark('profitTotal')} 
+            subLines={[`План: ${fmtPercent(plan.profitability)}`, `Факт: ${fmtPercent(fact.profitability)}`]} />
+        </div>
+
+        {/* Main Chart */}
+        <div className="card block">
+          <h3 className="card-title mb-4">Деньги на счетах</h3>
           <ResponsiveContainer width="100%" height="90%">
-            <LineChart data={lineData} className="chart chart--line">
-              <CartesianGrid vertical={false} className="grid grid--weak" />
-              <XAxis
-                dataKey="date"
-                className="axis axis--soft"
-                tickFormatter={(d) => dayjs(d).format('DD.MM')}
-              />
-              <YAxis className="axis axis--soft" domain={[0, 'auto']} />
-              <RechartsTooltip wrapperClassName="recharts-tooltip tooltip-compact tooltip-unified" content={<FundsTooltip />} />
-              <Line
-                type="monotone"
-                dataKey="profitTotal"
-                className="chart-line chart-line--primary"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-                isAnimationActive={false}
-              />
+            <LineChart data={lineData}>
+              <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
+              <XAxis dataKey="date" tickFormatter={d => dayjs(d).format('DD.MM')} stroke="var(--text-soft)" fontSize={12} tickLine={false} axisLine={false} />
+              <YAxis stroke="var(--text-soft)" fontSize={12} tickLine={false} axisLine={false} />
+              <RechartsTooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border)', strokeWidth: 2 }} />
+              <Line type="monotone" dataKey="profitTotal" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--card-bg)', strokeWidth: 2 }} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
-        </Box>
+        </div>
 
-        {/* аналитика */}
-        <Box className="analytics-grid">
-          {/* Доходные клиенты */}
-          <Box className="analytics-card">
-            <Typography variant="subtitle2" className="block-title">САМЫЕ ДОХОДНЫЕ КЛИЕНТЫ</Typography>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data?.topIncomeClients || []} layout="vertical" barCategoryGap={8} className="chart chart--bar">
-                <CartesianGrid horizontal={false} className="grid grid--weak" />
-                <XAxis type="number" className="axis axis--soft" tickFormatter={(v) => (v / 1000).toFixed(0) + 'K'} />
-                <YAxis dataKey="name" type="category" width={180} className="axis axis--soft" />
-                <RechartsTooltip wrapperClassName="recharts-tooltip tooltip-unified" content={<SimpleBarTooltip mode="money" />} />
-                <Bar dataKey="value" className="bar bar--primary" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
+        {/* Analytics Grid */}
+        <div className="dashboard-analytics-grid">
+          {[
+            { title: 'Самые доходные клиенты', data: data?.topIncomeClients, key: 'value', mode: 'money' },
+            { title: 'Контрагенты с расходами', data: data?.topExpenseContractors, key: 'value', mode: 'money' },
+            { title: 'Самые прибыльные проекты', data: data?.profitByProject, key: 'profit', mode: 'money' },
+            { title: 'Проекты с мин. рентабельностью', data: data?.profitabByProject, key: 'profitability', mode: 'percent' },
+          ].map((chart, idx) => (
+            <div key={idx} className="card block dashboard-analytics-card">
+              <h3 className="card-title mb-4">{chart.title}</h3>
+              <ResponsiveContainer width="100%" height="90%">
+                <BarChart data={chart.data || []} layout="vertical" barCategoryGap={10}>
+                  <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 3" />
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" width={140} stroke="var(--text-soft)" fontSize={11} tickLine={false} axisLine={false} />
+                  <RechartsTooltip content={<CustomTooltip mode={chart.mode} />} cursor={{ fill: 'var(--sidebar-bg)' }} />
+                  <Bar dataKey={chart.key} fill="var(--primary)" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ))}
+        </div>
 
-          {/* Расходные контрагенты — с расширенным тултипом */}
-          <Box className="analytics-card">
-            <Typography variant="subtitle2" className="block-title">КОНТРАГЕНТЫ С НАИБОЛЬШИМИ РАСХОДАМИ</Typography>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data?.topExpenseContractors || []} layout="vertical" barCategoryGap={8} className="chart chart--bar">
-                <CartesianGrid horizontal={false} className="grid grid--weak" />
-                <XAxis type="number" className="axis axis--soft" tickFormatter={(v) => (v / 1000).toFixed(0) + 'K'} />
-                <YAxis dataKey="name" type="category" width={180} className="axis axis--soft" />
-                <RechartsTooltip wrapperClassName="recharts-tooltip tooltip-unified" content={<TopExpenseTooltip />} />
-                <Bar dataKey="value" className="bar bar--primary" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
-
-          {/* Самые прибыльные проекты — вертикальные бары */}
-          <Box className="analytics-card">
-            <Typography variant="subtitle2" className="block-title">САМЫЕ ПРИБЫЛЬНЫЕ ПРОЕКТЫ</Typography>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data?.profitByProject || []} layout="vertical" barCategoryGap={8} className="chart chart--bar">
-                <CartesianGrid horizontal={false} className="grid grid--weak" />
-                <XAxis type="number" className="axis axis--soft" tickFormatter={(v) => (v / 1000).toFixed(0) + 'K'} />
-                <YAxis dataKey="name" type="category" width={180} className="axis axis--soft" />
-                <RechartsTooltip wrapperClassName="recharts-tooltip tooltip-unified" content={<SimpleBarTooltip mode="money" />} />
-                <Bar dataKey="profit" className="bar bar--primary" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
-
-          {/* Наименьшая рентабельность — вертикальные бары */}
-          <Box className="analytics-card">
-            <Typography variant="subtitle2" className="block-title">ПРОЕКТЫ С НАИМЕНЬШЕЙ РЕНТАБЕЛЬНОСТЬЮ</Typography>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data?.profitabByProject || []} layout="vertical" barCategoryGap={8} className="chart chart--bar">
-                <CartesianGrid horizontal={false} className="grid grid--weak" />
-                <XAxis type="number" className="axis axis--soft" tickFormatter={(v) => `${v}%`} />
-                <YAxis dataKey="name" type="category" width={180} className="axis axis--soft" />
-                <RechartsTooltip wrapperClassName="recharts-tooltip tooltip-unified" content={<SimpleBarTooltip mode="percent" />} />
-                <Bar dataKey="profitability" className="bar bar--primary" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
-        </Box>
-
-        {/* НОВАЯ КАРТОЧКА: Таблица пользователей */}
+        {/* Users Table */}
         {userSummaryData.length > 0 && (
-          <Box className="analytics-card" sx={{ mt: 2 }}>
-            <Typography variant="subtitle2" className="block-title">ПОЛЬЗОВАТЕЛИ</Typography>
-            <TableContainer component={Paper} sx={{ boxShadow: 'none' }}>
-              <Table size="small" aria-label="a dense table">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Никнейм</TableCell>
-                    <TableCell align="right">Заработок (доход)</TableCell>
-                    <TableCell align="right">Остаток</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {userSummaryData.map((user) => (
-                    <TableRow key={user.userId}>
-                      <TableCell component="th" scope="row">
-                        {user.name}
-                      </TableCell>
-                      <TableCell align="right">{fmtMoney(user.income)}</TableCell>
-                      <TableCell align="right">{fmtMoney(user.balance)}</TableCell>
-                    </TableRow>
+          <div className="card block">
+            <div className="p-4 border-b border-white-5 font-bold">Пользователи</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table w-full">
+                <thead>
+                  <tr>
+                    <th>Никнейм</th>
+                    <th className="text-right">Заработок</th>
+                    <th className="text-right">Остаток</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userSummaryData.map(u => (
+                    <tr key={u.userId} className="hover:bg-sidebar">
+                      <td className="font-medium">{u.name}</td>
+                      <td className="text-right">{fmtMoney(u.income)}</td>
+                      <td className={`text-right font-bold ${u.balance >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {fmtMoney(u.balance)}
+                      </td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Box>
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
+      </div>
 
-        {!isFetching && lineData.length === 0 && (
-          <Box className="pad-1">
-            <Typography variant="body2" color="text.secondary">Нет данных за выбранный период/проекты.</Typography>
-          </Box>
-        )}
-      </Box>
-    </Box>
+      {!isFetching && lineData.length === 0 && (
+        <div className="text-center text-soft p-10">Нет данных за выбранный период.</div>
+      )}
+    </div>
   );
 };
 
