@@ -7,12 +7,10 @@ import {
   Edit2, 
   Calendar,
   Settings,
-  Plus,
-  Trash2,
   ChevronDown,
   ChevronUp,
   Layers,
-  Palette // Иконка палитры
+  Check // Добавил иконку галочки для сохранения редактирования
 } from 'lucide-react';
 import { api, me } from '../lib/api';
 
@@ -176,9 +174,7 @@ const BoardTaskCard: React.FC<{
             onTouchEnd={() => onUpdateProgress(item.id, localProgress)}
           />
           <div className="flex justify-between text-[10px] text-soft mt-1">
-            <span>0%</span>
             <span className="text-primary font-bold">{localProgress}%</span>
-            <span>100%</span>
           </div>
        </div>
     </div>
@@ -403,9 +399,7 @@ const BoardPage: React.FC<{ showError: (m: string) => void }> = ({ showError }) 
           <div className="board-scroll-container">
             <div className="board-columns">
               {cols.map(col => {
-                // Если цвет HEX, создаем inline стиль
                 const colorStyle = getStatusStyle(col.meta.colorClass);
-                // Если цвет это CSS-класс (из старых), он добавится в className
                 const badgeClass = col.meta.colorClass && !col.meta.colorClass.startsWith('#') 
                   ? col.meta.colorClass 
                   : 'badge-secondary';
@@ -416,7 +410,6 @@ const BoardPage: React.FC<{ showError: (m: string) => void }> = ({ showError }) 
                     className="kanban-col" 
                     onDragOver={(e) => { if (allowDnD) e.preventDefault(); }}
                     onDrop={(e) => handleDrop(e, col.meta.key)}
-                    // Исправленный стиль для скролла колонки
                     style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}
                   >
                     <div className="kanban-header">
@@ -468,7 +461,7 @@ const BoardPage: React.FC<{ showError: (m: string) => void }> = ({ showError }) 
         />
       )}
 
-      {/* Status Modal (With Colors) */}
+      {/* Status Modal (With Colors & Editing) */}
       {statusModalOpen && (
         <GenericListManager 
           title="Редактор статусов"
@@ -479,7 +472,7 @@ const BoardPage: React.FC<{ showError: (m: string) => void }> = ({ showError }) 
         />
       )}
 
-      {/* Groups Modal (Simple list) */}
+      {/* Groups Modal (Editing only) */}
       {groupsModalOpen && (
         <GenericListManager 
           title="Редактор групп"
@@ -504,21 +497,8 @@ const GenericListManager: React.FC<{
   withColor?: boolean;
 }> = ({ title, items, onChange, onClose, withColor }) => {
   const [temp, setTemp] = useState(items);
-  const [newLabel, setNewLabel] = useState('');
-
-  const add = () => {
-    if (!newLabel.trim()) return;
-    setTemp([...temp, { 
-      key: newLabel.trim(), 
-      label: newLabel.trim(), 
-      colorClass: withColor ? '#32a0ff' : undefined // Default color
-    }]);
-    setNewLabel('');
-  };
-
-  const remove = (idx: number) => {
-    setTemp(temp.filter((_, i) => i !== idx));
-  };
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState('');
 
   const move = (idx: number, dir: -1 | 1) => {
     if (idx + dir < 0 || idx + dir >= temp.length) return;
@@ -533,6 +513,19 @@ const GenericListManager: React.FC<{
     setTemp(next);
   };
 
+  const startEdit = (idx: number) => {
+    setEditingIndex(idx);
+    setEditingValue(temp[idx].label);
+  };
+
+  const saveEdit = (idx: number) => {
+    if (!editingValue.trim()) return;
+    const next = [...temp];
+    next[idx] = { ...next[idx], label: editingValue.trim(), key: editingValue.trim() }; // Update key as well if label changes to keep consistency
+    setTemp(next);
+    setEditingIndex(null);
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
@@ -540,41 +533,45 @@ const GenericListManager: React.FC<{
           <h3>{title}</h3>
           <button className="icon-btn" onClick={onClose}><X size={20}/></button>
         </div>
-        <div className="modal-body modal-body-content">
-          <div className="flex flex-col gap-2 mb-4">
+        <div className="modal-body">
+          <div className="modal-body-content">
             {temp.map((s, idx) => (
-              <div key={idx} className="flex items-center justify-between p-2 bg-head rounded border border-border">
-                <span className="truncate flex-1 mr-2">{s.label}</span>
-                
-                {withColor && (
-                  <div className="flex items-center gap-2 mr-2">
-                    <input 
-                      type="color" 
-                      className="cursor-pointer border-none bg-transparent w-8 h-8 p-0"
-                      value={s.colorClass?.startsWith('#') ? s.colorClass : '#868a91'}
-                      onChange={(e) => updateColor(idx, e.target.value)}
-                      title="Выбрать цвет"
-                    />
-                  </div>
+              <div key={idx} className="modal-body-content-item">
+                {editingIndex === idx ? (
+                   <div className="flex flex-1 items-center gap-2 mr-2">
+                      <input 
+                        className="input sm flex-1"
+                        autoFocus
+                        value={editingValue}
+                        onChange={(e) => setEditingValue(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && saveEdit(idx)}
+                      />
+                      <button className="icon-btn tiny text-success" onClick={() => saveEdit(idx)}><Check size={14}/></button>
+                   </div>
+                ) : (
+                   <span className="truncate flex-1 mr-2 cursor-pointer" onClick={() => startEdit(idx)} title="Нажмите для редактирования">{s.label}</span>
                 )}
-
+                
                 <div className="flex gap-1">
+                    {withColor && (
+                    <div className="flex items-center gap-2 mr-2">
+                      <input 
+                        type="color" 
+                        className="cursor-pointer border-none bg-transparent w-8 h-8 p-0"
+                        value={s.colorClass?.startsWith('#') ? s.colorClass : '#868a91'}
+                        onChange={(e) => updateColor(idx, e.target.value)}
+                        title="Выбрать цвет"
+                      />
+                    </div>
+                  )}
                   <button className="icon-btn tiny" onClick={() => move(idx, -1)} disabled={idx === 0}><ChevronUp size={14}/></button>
                   <button className="icon-btn tiny" onClick={() => move(idx, 1)} disabled={idx === temp.length - 1}><ChevronDown size={14}/></button>
-                  <button className="icon-btn tiny danger" onClick={() => remove(idx)}><Trash2 size={14}/></button>
+                  {editingIndex !== idx && (
+                    <button className="icon-btn tiny" onClick={() => startEdit(idx)}><Edit2 size={14}/></button>
+                  )}
                 </div>
               </div>
             ))}
-          </div>
-          <div className="flex gap-2">
-            <input 
-              className="input flex-1" 
-              placeholder="Добавить..." 
-              value={newLabel}
-              onChange={e => setNewLabel(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && add()}
-            />
-            <button className="btn" onClick={add}><Plus size={16}/></button>
           </div>
         </div>
         <div className="modal-footer">

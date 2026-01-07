@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom'; // <--- Добавлен импорт
+import { createPortal } from 'react-dom';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, CartesianGrid, XAxis, YAxis,
   Tooltip as RechartsTooltip, ResponsiveContainer
@@ -45,6 +45,15 @@ type DashboardApiResponse = {
 };
 
 type ResponsibleUser = { id: number; login: string; nickname?: string | null };
+
+/* ---------- Ключи LocalStorage ---------- */
+const STORAGE_KEYS = {
+  PRESET: 'dash_preset',
+  DATE_START: 'dash_date_start',
+  DATE_END: 'dash_date_end',
+  USERS: 'dash_selected_users',
+  PROJECTS: 'dash_selected_projects',
+};
 
 /* ---------- Хелперы дат ---------- */
 const quarterBounds = (d: Dayjs) => {
@@ -140,16 +149,69 @@ const CustomTooltip = ({ active, payload, label, mode = 'money' }: any) => {
 const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showError }) => {
   // --- Состояния фильтров ---
   const [activeDropdown, setActiveDropdown] = useState<'date' | 'users' | 'projects' | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 }); // <--- Координаты для портала
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   
-  // Date state
-  const [preset, setPreset] = useState<PresetKey>('allTime');
-  const [dateRange, setDateRange] = useState<{ start: Dayjs | null; end: Dayjs | null }>(() => getPresetRange('allTime'));
+  // -- Инициализация даты (из памяти или Current Year) --
+  const [preset, setPreset] = useState<PresetKey>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.PRESET);
+    // По умолчанию 'currentYear', если нет сохраненного
+    return (saved as PresetKey) || 'currentYear';
+  });
 
-  // Filter state
-  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
-  const [selectedUsers, setSelectedUsers] = useState<Set<number>>(new Set());
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [dateRange, setDateRange] = useState<{ start: Dayjs | null; end: Dayjs | null }>(() => {
+    // Пытаемся восстановить кастомный диапазон, если пресет custom
+    const savedStart = localStorage.getItem(STORAGE_KEYS.DATE_START);
+    const savedEnd = localStorage.getItem(STORAGE_KEYS.DATE_END);
+    const savedPreset = localStorage.getItem(STORAGE_KEYS.PRESET);
+
+    if (savedPreset === 'custom' && savedStart) {
+      return { 
+        start: dayjs(savedStart), 
+        end: savedEnd ? dayjs(savedEnd) : null 
+      };
+    }
+    // Иначе берем диапазон от пресета (или дефолтного currentYear)
+    return getPresetRange((savedPreset as PresetKey) || 'currentYear');
+  });
+
+  // -- Инициализация фильтров (из памяти или пустой Set) --
+  // Если в памяти null, значит пользователь зашел первый раз => флаг isInitialLoad = true
+  const [selectedUsers, setSelectedUsers] = useState<Set<number>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.USERS);
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.PROJECTS);
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+
+  // Флаги для первичной загрузки "Всех", если памяти не было
+  const [shouldInitUsers, setShouldInitUsers] = useState(() => !localStorage.getItem(STORAGE_KEYS.USERS));
+  const [shouldInitProjects, setShouldInitProjects] = useState(() => !localStorage.getItem(STORAGE_KEYS.PROJECTS));
+
+  // -- Эффекты сохранения в LocalStorage --
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.PRESET, preset);
+  }, [preset]);
+
+  useEffect(() => {
+    if (dateRange.start) localStorage.setItem(STORAGE_KEYS.DATE_START, dateRange.start.format('YYYY-MM-DD'));
+    else localStorage.removeItem(STORAGE_KEYS.DATE_START);
+    
+    if (dateRange.end) localStorage.setItem(STORAGE_KEYS.DATE_END, dateRange.end.format('YYYY-MM-DD'));
+    else localStorage.removeItem(STORAGE_KEYS.DATE_END);
+  }, [dateRange]);
+
+  useEffect(() => {
+    // Сохраняем массив
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(Array.from(selectedUsers)));
+  }, [selectedUsers]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(Array.from(selectedProjects)));
+  }, [selectedProjects]);
+
 
   // Логика переключения дропдауна с расчетом координат
   const toggleDropdown = (key: 'date' | 'users' | 'projects', e: React.MouseEvent<HTMLButtonElement>) => {
@@ -158,7 +220,7 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
     } else {
       const rect = e.currentTarget.getBoundingClientRect();
       setDropdownPos({
-        top: rect.bottom + 8, // Отступ снизу, как было margin-top: 8px
+        top: rect.bottom + 8,
         left: rect.left
       });
       setActiveDropdown(key);
@@ -171,9 +233,8 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element;
-      // Проверяем клик: был ли он внутри панели фильтров ИЛИ внутри самого открытого портала
       const clickedInsideFilter = dropdownRef.current && dropdownRef.current.contains(target);
-      const clickedInsidePortal = target.closest('.dropdown-portal-root'); // Класс-маркер для портала
+      const clickedInsidePortal = target.closest('.dropdown-portal-root');
 
       if (!clickedInsideFilter && !clickedInsidePortal) {
         setActiveDropdown(null);
@@ -211,16 +272,21 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
 
   if (isError && error) showError(error.message);
 
-  // Инициализация фильтров "Выбрать всё"
+  // Инициализация фильтров "Выбрать всё" ТОЛЬКО если не было данных в localStorage
   useEffect(() => {
-    if (data && isInitialLoad) {
-      const allUserIds = (data.allUsers || []).filter(Number.isFinite);
-      setSelectedUsers(new Set(allUserIds));
-      const allProjectNames = Object.values(data.contractorsMap || {}).flat();
-      setSelectedProjects(new Set(allProjectNames));
-      setIsInitialLoad(false);
+    if (data) {
+      if (shouldInitUsers) {
+        const allUserIds = (data.allUsers || []).filter(Number.isFinite);
+        setSelectedUsers(new Set(allUserIds));
+        setShouldInitUsers(false); // Больше не перезаписывать
+      }
+      if (shouldInitProjects) {
+        const allProjectNames = Object.values(data.contractorsMap || {}).flat();
+        setSelectedProjects(new Set(allProjectNames));
+        setShouldInitProjects(false);
+      }
     }
-  }, [data, isInitialLoad]);
+  }, [data, shouldInitUsers, shouldInitProjects]);
 
   // Подготовка данных
   const contractorsMap = data?.contractorsMap || {};
@@ -259,7 +325,7 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
           <div className="relative">
             <button 
               className={`chip-btn ${activeDropdown === 'date' ? 'active' : ''}`}
-              onClick={(e) => toggleDropdown('date', e)} // <-- Используем toggleDropdown
+              onClick={(e) => toggleDropdown('date', e)}
             >
               <CalendarIcon size={16} />
               {preset === 'custom' 
@@ -269,7 +335,7 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
               <ChevronDown size={14} />
             </button>
             
-            {activeDropdown === 'date' && createPortal( // <-- Рендерим в портал
+            {activeDropdown === 'date' && createPortal(
               <div 
                 className="dropdown-menu p-3 dropdown-portal-root" 
                 style={{ 
@@ -277,7 +343,7 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
                   top: dropdownPos.top, 
                   left: dropdownPos.left, 
                   zIndex: 9999,
-                  marginTop: 0 // Сброс отступа, так как позиционируем точно
+                  marginTop: 0
                 }}
               >
                 <div className="flex gap-2 mb-3">
@@ -320,7 +386,7 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
                   ))}
                 </div>
               </div>,
-              document.body // <-- Цель портала
+              document.body
             )}
           </div>
 
@@ -428,9 +494,6 @@ const DashboardPage: React.FC<{ showError: (msg: string) => void }> = ({ showErr
 
           {isFetching && <div className="text-sm text-soft self-center animate-pulse">Обновление...</div>}
         </div>
-
-
-      
 
         {/* KPI Cards Grid */}
         <div className="kpi-block">

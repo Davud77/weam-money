@@ -422,7 +422,8 @@ const ProjectDetailPage: React.FC<{ showError: (msg: string) => void }> = ({ sho
                <h3>{editSectionRow.id ? 'Редактировать раздел' : 'Новый раздел'}</h3>
                <button className="icon-btn" onClick={() => setEditSectionRow(null)}><X size={20}/></button>
              </div>
-             <div className="modal-body flex flex-col gap-4">
+             <div className="modal-body">
+              <div className="modal-body-content">
                <div className="input-group">
                  <label className="input-label">Название раздела</label>
                  <input className="input" value={editSectionRow.section || ''} onChange={e => setEditSectionRow({...editSectionRow, section: e.target.value})} />
@@ -454,6 +455,7 @@ const ProjectDetailPage: React.FC<{ showError: (msg: string) => void }> = ({ sho
                  <label className="input-label">Сумма договора</label>
                  <input type="number" className="input" value={editSectionRow.amount} onChange={e => setEditSectionRow({...editSectionRow, amount: +e.target.value})} />
                </div>
+               </div>
              </div>
              
              <div className="modal-footer justify-between">
@@ -483,7 +485,8 @@ const ProjectDetailPage: React.FC<{ showError: (msg: string) => void }> = ({ sho
                 <h3>{isTxEdit ? 'Редактировать транзакцию' : 'Новая транзакция'}</h3>
                 <button className="icon-btn" onClick={() => setTxDialogOpen(false)}><X size={20}/></button>
               </div>
-              <div className="modal-body flex flex-col gap-4">
+              <div className="modal-body">
+                <div className="modal-body-content">
                  <div className="input-group">
                     <label className="input-label">Раздел</label>
                     <select 
@@ -530,6 +533,7 @@ const ProjectDetailPage: React.FC<{ showError: (msg: string) => void }> = ({ sho
                  <div className="input-group">
                    <label className="input-label">Примечание</label>
                    <textarea className="input" rows={2} value={txForm.note || ''} onChange={e => setTxForm({...txForm, note: e.target.value})} />
+                 </div>
                  </div>
               </div>
 

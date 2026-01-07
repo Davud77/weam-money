@@ -1,27 +1,29 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom'; // <--- Добавлен импорт
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { 
   Plus, 
+  Minus,
   Download, 
   Filter, 
   Edit, 
   Trash2, 
   Calendar as CalendarIcon, 
   ChevronDown, 
-  Search, 
   X,
-  CreditCard,
-  Briefcase,
-  ArrowRightLeft,
-  Minus
+  Users,
+  LayoutGrid,
+  ArrowRightLeft
 } from 'lucide-react';
+import dayjs, { Dayjs } from 'dayjs';
+import 'dayjs/locale/ru';
 
 import { api, me } from '../lib/api';
 import { fmtMoney } from '../lib/format';
 
 /* ------------------------------- Types ----------------------------------- */
 type OperationType = 'Расход' | 'Доход';
+type PresetKey = 'currentMonth' | 'currentQuarter' | 'currentYear' | 'prevMonth' | 'prevQuarter' | 'prevYear' | 'allTime' | 'custom';
 
 export interface Transaction {
   id: number;
@@ -59,15 +61,45 @@ const empty: Omit<Transaction, 'id' | 'remainder' | 'contractor' | 'project' | '
   responsible: '', date: '', total: 0, operationType: 'Расход', note: '', project_id: null,
 };
 
+/* ---------- Ключи LocalStorage (Одинаковые с Dashboard) ---------- */
+const STORAGE_KEYS = {
+  PRESET: 'dash_preset',
+  DATE_START: 'dash_date_start',
+  DATE_END: 'dash_date_end',
+  USERS: 'dash_selected_users',
+  PROJECTS: 'dash_selected_projects',
+};
+
+const presetLabel: Record<PresetKey, string> = {
+  currentMonth: 'Текущий месяц', currentQuarter: 'Текущий квартал', currentYear: 'Текущий год',
+  prevMonth: 'Прошлый месяц', prevQuarter: 'Прошлый квартал', prevYear: 'Прошлый год',
+  allTime: 'Все время', custom: 'Период',
+};
+
 /* Хелперы дат */
-const formatISO = (d: Date) => d.toISOString().slice(0, 10);
-const today = new Date();
-const presets = [
-  { label: 'Текущий месяц',   from: new Date(today.getFullYear(), today.getMonth(), 1), to: new Date(today.getFullYear(), today.getMonth() + 1, 0) },
-  { label: 'Прошлый месяц',   from: new Date(today.getFullYear(), today.getMonth() - 1, 1), to: new Date(today.getFullYear(), today.getMonth(), 0) },
-  { label: 'Текущий год',     from: new Date(today.getFullYear(), 0, 1),    to: new Date(today.getFullYear(), 11, 31) },
-  { label: 'Все время',       from: null, to: null },
-];
+const quarterBounds = (d: Dayjs) => {
+  const qStartMonth = d.month() - (d.month() % 3);
+  const start = dayjs(d).month(qStartMonth).startOf('month');
+  const end = start.add(2, 'month').endOf('month');
+  return { start, end };
+};
+
+const getPresetRange = (k: PresetKey): { start: Dayjs | null; end: Dayjs | null } => {
+  const today = dayjs();
+  switch (k) {
+    case 'currentMonth':   return { start: today.startOf('month'), end: today.endOf('month') };
+    case 'currentQuarter': return quarterBounds(today);
+    case 'currentYear':    return { start: today.startOf('year'), end: today.endOf('year') };
+    case 'prevMonth': {
+      const prev = today.subtract(1, 'month');
+      return { start: prev.startOf('month'), end: prev.endOf('month') };
+    }
+    case 'prevQuarter':    return quarterBounds(today.subtract(3, 'month'));
+    case 'prevYear':       return { start: today.subtract(1, 'year').startOf('year'), end: today.subtract(1, 'year').endOf('year') };
+    case 'allTime':        return { start: null, end: null };
+    default:               return { start: null, end: null };
+  }
+};
 
 function getProjectSection(projects: ProjectRow[], pid?: number | null): string {
   if (!Number.isFinite(Number(pid))) return '—';
@@ -204,18 +236,119 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
     queryKey: ['projects'], queryFn: () => api<ProjectRow[]>(`${API}/projects`), staleTime: STALE_15M
   });
 
-  // Filters State
-  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 }); // <--- Состояние позиции портала
+  // --- Основные фильтры (как на Dashboard) ---
+  const [activeDropdown, setActiveDropdown] = useState<'date' | 'users' | 'projects' | 'op' | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [dateRange, setDateRange] = useState<{ from?: string; to?: string }>({});
+  // 1. Дата (Инициализация из памяти)
+  const [preset, setPreset] = useState<PresetKey>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.PRESET);
+    return (saved as PresetKey) || 'currentYear';
+  });
+
+  const [dateRange, setDateRange] = useState<{ start: Dayjs | null; end: Dayjs | null }>(() => {
+    const savedStart = localStorage.getItem(STORAGE_KEYS.DATE_START);
+    const savedEnd = localStorage.getItem(STORAGE_KEYS.DATE_END);
+    const savedPreset = localStorage.getItem(STORAGE_KEYS.PRESET);
+
+    if (savedPreset === 'custom' && savedStart) {
+      return { 
+        start: dayjs(savedStart), 
+        end: savedEnd ? dayjs(savedEnd) : null 
+      };
+    }
+    return getPresetRange((savedPreset as PresetKey) || 'currentYear');
+  });
+
+  // 2. Пользователи (Инициализация из памяти)
+  const [selectedUsers, setSelectedUsers] = useState<Set<number>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.USERS);
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+  
+  // 3. Проекты (Инициализация из памяти - храним ИМЕНА проектов)
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.PROJECTS);
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+
+  // Флаги инициализации "Выбрать всё"
+  const [shouldInitUsers, setShouldInitUsers] = useState(() => !localStorage.getItem(STORAGE_KEYS.USERS));
+  const [shouldInitProjects, setShouldInitProjects] = useState(() => !localStorage.getItem(STORAGE_KEYS.PROJECTS));
+
+  // 4. Дополнительные фильтры
   const [operationFilter, setOperationFilter] = useState<'all' | 'income' | 'expense'>('all');
-  const [planFilter, setPlanFilter] = useState<'all' | 'planned' | 'actual'>('all');
-  const [accountFilter, setAccountFilter] = useState<string>('all');
-  const [projectKeyFilter, setProjectKeyFilter] = useState<number | 'all'>('all');
   const [amountRange, setAmountRange] = useState<{ min?: number; max?: number }>({});
   
+  // -- Эффекты сохранения в LocalStorage --
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.PRESET, preset);
+  }, [preset]);
+
+  useEffect(() => {
+    if (dateRange.start) localStorage.setItem(STORAGE_KEYS.DATE_START, dateRange.start.format('YYYY-MM-DD'));
+    else localStorage.removeItem(STORAGE_KEYS.DATE_START);
+    
+    if (dateRange.end) localStorage.setItem(STORAGE_KEYS.DATE_END, dateRange.end.format('YYYY-MM-DD'));
+    else localStorage.removeItem(STORAGE_KEYS.DATE_END);
+  }, [dateRange]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(Array.from(selectedUsers)));
+  }, [selectedUsers]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(Array.from(selectedProjects)));
+  }, [selectedProjects]);
+
+  // -- Инициализация "Выбрать всё" --
+  useEffect(() => {
+    if (users.length > 0 && shouldInitUsers) {
+      setSelectedUsers(new Set(users.map(u => u.id)));
+      setShouldInitUsers(false);
+    }
+    if (projects.length > 0 && shouldInitProjects) {
+      // Собираем все уникальные имена проектов
+      const names = new Set<string>();
+      projects.forEach(p => { if (p.project) names.add(p.project); });
+      setSelectedProjects(names);
+      setShouldInitProjects(false);
+    }
+  }, [users, projects, shouldInitUsers, shouldInitProjects]);
+
+
+  // Подготовка списка пользователей
+  const userOptions = useMemo(() => {
+    return users.map(u => ({ id: u.id, label: u.nickname || u.login }));
+  }, [users]);
+
+  // Группировка проектов (Как на Dashboard: Контрагент -> [Имена проектов])
+  const projectGroups = useMemo(() => {
+    const groups: Record<string, Set<string>> = {};
+    projects.forEach(p => {
+      const contr = p.contractor || 'Без контрагента';
+      const name = p.project;
+      if (!name) return;
+      
+      if (!groups[contr]) groups[contr] = new Set();
+      groups[contr].add(name);
+    });
+
+    // Преобразуем Set в Array и сортируем
+    const result: Record<string, string[]> = {};
+    Object.keys(groups).sort().forEach(key => {
+      result[key] = Array.from(groups[key]).sort();
+    });
+    return result;
+  }, [projects]);
+
+  // Плоский список всех имен проектов для проверки "Выбрано всё"
+  const allProjectNames = useMemo(() => {
+    return Object.values(projectGroups).flat();
+  }, [projectGroups]);
+
+
   // Modals State
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formState, setFormState] = useState<Partial<Transaction>>(empty);
@@ -225,7 +358,7 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
   const isEdit = 'id' in formState;
 
   // Логика открытия портала фильтров
-  const toggleDropdown = (key: string, e: React.MouseEvent<HTMLButtonElement>) => {
+  const toggleDropdown = (key: 'date' | 'users' | 'projects' | 'op', e: React.MouseEvent<HTMLButtonElement>) => {
     if (activeDropdown === key) {
       setActiveDropdown(null);
     } else {
@@ -238,7 +371,7 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
     }
   };
 
-  // Click outside listener for dropdowns
+  // Click outside listener
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element;
@@ -253,7 +386,7 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter Options Preparation
+  // Section Options for Form
   const sectionOptions = useMemo<SectionOption[]>(() => {
     const opts: SectionOption[] = [];
     projects.forEach((p) => {
@@ -265,40 +398,17 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
     return opts.sort((a, b) => a.contractor.localeCompare(b.contractor));
   }, [projects]);
 
-  const projectKeyOptions = useMemo(() => {
-    const groups = new Map<string, number[]>();
-    for (const p of projects) {
-      const label = `${p.contractor || '—'} • ${p.project || '—'}`.trim();
-      const pid = Number(p.id);
-      const arr = groups.get(label) || [];
-      arr.push(pid);
-      groups.set(label, arr);
-    }
-    return Array.from(groups.entries()).map(([label, ids]) => ({
-      id: ids[0], ids: Array.from(new Set(ids)), label 
-    })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [projects]);
-
-  const selectedProjectGroup = useMemo(() => {
-    if (projectKeyFilter === 'all') return null;
-    return projectKeyOptions.find(o => o.id === projectKeyFilter) || null;
-  }, [projectKeyFilter, projectKeyOptions]);
 
   // Query Params
   const params = useMemo(() => {
     const usp = new URLSearchParams();
-    if (dateRange.from) usp.set('start', dateRange.from);
-    if (dateRange.to)   usp.set('end',   dateRange.to);
+    if (dateRange.start) usp.set('start', dateRange.start.format('YYYY-MM-DD'));
+    if (dateRange.end)   usp.set('end',   dateRange.end.format('YYYY-MM-DD'));
     if (operationFilter !== 'all') usp.set('op', operationFilter);
-    if (planFilter !== 'all')      usp.set('plan', planFilter);
-    if (accountFilter !== 'all')   usp.set('account', accountFilter);
-    if (selectedProjectGroup && selectedProjectGroup.ids.length === 1) {
-      usp.set('project_id', String(selectedProjectGroup.ids[0]));
-    }
     if (amountRange.min != null)   usp.set('min', String(amountRange.min));
     if (amountRange.max != null)   usp.set('max', String(amountRange.max));
     return usp.toString();
-  }, [dateRange, operationFilter, planFilter, accountFilter, selectedProjectGroup, amountRange]);
+  }, [dateRange, operationFilter, amountRange]);
 
   const { data: queryData, isLoading: rowsLoading, isError, error } = useQuery<QueryResponse>({
     queryKey: ['transactions-query', params],
@@ -313,11 +423,20 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
   
   // Client-side Filtering
   const viewRows = useMemo(() => {
-    const group = selectedProjectGroup;
-    if (!group || group.ids.length <= 1) return rows;
-    const set = new Set(group.ids.map(Number));
-    return rows.filter(r => set.has(Number(r.project_id)));
-  }, [rows, selectedProjectGroup]);
+    return rows.filter(r => {
+      // 1. Filter Users
+      const user = users.find(u => u.login === r.responsible);
+      if (user && !selectedUsers.has(user.id)) return false;
+
+      // 2. Filter Projects (By Name)
+      if (r.project_id) {
+        const proj = projects.find(p => p.id === r.project_id);
+        if (proj && proj.project && !selectedProjects.has(proj.project)) return false;
+      }
+
+      return true;
+    });
+  }, [rows, selectedUsers, selectedProjects, users, projects]);
 
   // Mutations
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['transactions-query'] }); };
@@ -378,28 +497,59 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
       {/* Filters Bar */}
         <div className="filtr" ref={dropdownRef}>
           
-          {/* DATE Filter */}
+          {/* 1. DATE Filter */}
           <div className="relative">
-            <button className={`chip-btn ${dateRange.from ? 'active' : ''}`} onClick={(e) => toggleDropdown('date', e)}>
-              <CalendarIcon size={16} /> {dateRange.from ? `${dateRange.from}..` : 'Дата'} <ChevronDown size={14}/>
+            <button 
+              className={`chip-btn ${activeDropdown === 'date' ? 'active' : ''}`}
+              onClick={(e) => toggleDropdown('date', e)}
+            >
+              <CalendarIcon size={16} />
+              {preset === 'custom' 
+                ? `${dateRange.start?.format('DD.MM.YY') ?? '...'} — ${dateRange.end?.format('DD.MM.YY') ?? '...'}`
+                : presetLabel[preset]
+              }
+              <ChevronDown size={14} />
             </button>
+            
             {activeDropdown === 'date' && createPortal(
               <div 
                 className="dropdown-menu p-3 dropdown-portal-root" 
-                style={{
-                  position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, marginTop: 0
-                }}
+                style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, marginTop: 0 }}
               >
-                <div className="flex gap-2 mb-2">
-                  <input type="date" className="input sm" value={dateRange.from||''} onChange={e=>setDateRange({...dateRange, from: e.target.value})}/>
-                  <input type="date" className="input sm" value={dateRange.to||''} onChange={e=>setDateRange({...dateRange, to: e.target.value})}/>
+                <div className="flex gap-2 mb-3">
+                  <div className="input-group flex-1 mb-0">
+                    <label className="input-label">От</label>
+                    <input 
+                      type="date" className="input sm" 
+                      value={dateRange.start ? dateRange.start.format('YYYY-MM-DD') : ''}
+                      onChange={(e) => {
+                        const d = e.target.value ? dayjs(e.target.value) : null;
+                        setDateRange(prev => ({ ...prev, start: d }));
+                        setPreset('custom');
+                      }}
+                    />
+                  </div>
+                  <div className="input-group flex-1 mb-0">
+                    <label className="input-label">До</label>
+                    <input 
+                      type="date" className="input sm"
+                      value={dateRange.end ? dateRange.end.format('YYYY-MM-DD') : ''}
+                      onChange={(e) => {
+                        const d = e.target.value ? dayjs(e.target.value) : null;
+                        setDateRange(prev => ({ ...prev, end: d }));
+                        setPreset('custom');
+                      }}
+                    />
+                  </div>
                 </div>
                 <div className="actions-block actions-block-wrap">
-                  {presets.map(p => (
-                    <button key={p.label} className="btn" onClick={() => {
-                      setDateRange({ from: p.from ? formatISO(p.from) : undefined, to: p.to ? formatISO(p.to) : undefined });
-                      setActiveDropdown(null);
-                    }}>{p.label}</button>
+                  {(['currentMonth','currentQuarter','currentYear','prevMonth','prevQuarter','prevYear','allTime'] as PresetKey[]).map(k => (
+                    <button 
+                      key={k} className={`btn ${preset === k ? 'active' : ''}`}
+                      onClick={() => { setPreset(k); setDateRange(getPresetRange(k)); setActiveDropdown(null); }}
+                    >
+                      {presetLabel[k]}
+                    </button>
                   ))}
                 </div>
               </div>,
@@ -407,7 +557,97 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
             )}
           </div>
 
-          {/* OPERATION Filter */}
+          {/* 2. USERS Filter */}
+          <div className="relative">
+            <button 
+              className={`chip-btn ${activeDropdown === 'users' ? 'active' : ''}`}
+              onClick={(e) => toggleDropdown('users', e)}
+            >
+              <Users size={16} />
+              {selectedUsers.size === users.length ? 'Все пользователи' : `Выбрано: ${selectedUsers.size}`}
+              <ChevronDown size={14} />
+            </button>
+
+            {activeDropdown === 'users' && createPortal(
+              <div 
+                className="dropdown-menu p-2 dropdown-portal-root" 
+                style={{ 
+                  position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, 
+                  width: 250, maxHeight: 400, overflowY: 'auto', marginTop: 0
+                }}
+              >
+                <div className="actions-block">
+                    <button className="btn" onClick={() => setSelectedUsers(new Set(users.map(u => u.id)))}>Все</button>
+                    <button className="btn" onClick={() => setSelectedUsers(new Set())}>Очистить</button>
+                </div>
+                {userOptions.length === 0 && <div className="text-sm text-soft p-2">Нет данных</div>}
+                {userOptions.map(u => (
+                  <label key={u.id} className="dropdown-item checkbox-label">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedUsers.has(u.id)}
+                      onChange={(e) => {
+                        const next = new Set(selectedUsers);
+                        e.target.checked ? next.add(u.id) : next.delete(u.id);
+                        setSelectedUsers(next);
+                      }}
+                    />
+                    <span>{u.label}</span>
+                  </label>
+                ))}
+              </div>,
+              document.body
+            )}
+          </div>
+
+          {/* 3. PROJECTS Filter */}
+          <div className="relative">
+            <button 
+              className={`chip-btn ${activeDropdown === 'projects' ? 'active' : ''}`}
+              onClick={(e) => toggleDropdown('projects', e)}
+            >
+              <LayoutGrid size={16} />
+              {selectedProjects.size === allProjectNames.length ? 'Все проекты' : `Выбрано: ${selectedProjects.size}`}
+              <ChevronDown size={14} />
+            </button>
+
+            {activeDropdown === 'projects' && createPortal(
+              <div 
+                className="dropdown-menu p-2 dropdown-portal-root" 
+                style={{ 
+                  position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, 
+                  width: 300, maxHeight: 400, overflowY: 'auto', marginTop: 0
+                }}
+              >
+                <div className="actions-block">
+                    <button className="btn" onClick={() => setSelectedProjects(new Set(allProjectNames))}>Все</button>
+                    <button className="btn" onClick={() => setSelectedProjects(new Set())}>Очистить</button>
+                </div>
+                {Object.entries(projectGroups).map(([contr, projs]) => (
+                  <div key={contr} className="mb-3">
+                    <div className="text-xs font-bold text-soft mb-1 uppercase tracking-wider">{contr}</div>
+                    {projs.map(pName => (
+                        <label key={pName} className="dropdown-item checkbox-label">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedProjects.has(pName)}
+                            onChange={(e) => {
+                              const next = new Set(selectedProjects);
+                              e.target.checked ? next.add(pName) : next.delete(pName);
+                              setSelectedProjects(next);
+                            }}
+                          />
+                          <span className="truncate">{pName}</span>
+                        </label>
+                    ))}
+                  </div>
+                ))}
+              </div>,
+              document.body
+            )}
+          </div>
+
+          {/* 4. OPERATION Filter */}
           <div className="relative">
             <button className={`chip-btn ${operationFilter !== 'all' ? 'active' : ''}`} onClick={(e) => toggleDropdown('op', e)}>
               <ArrowRightLeft size={16} /> {operationFilter === 'all' ? 'Все операции' : operationFilter === 'income' ? 'Доход' : 'Расход'} <ChevronDown size={14}/>
@@ -415,9 +655,7 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
             {activeDropdown === 'op' && createPortal(
               <div 
                 className="dropdown-menu p-1 dropdown-portal-root" 
-                style={{
-                  position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, marginTop: 0
-                }}
+                style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, marginTop: 0 }}
               >
                 {[{v:'all',l:'Все'},{v:'income',l:'Доход'},{v:'expense',l:'Расход'}].map(o => (
                   <div key={o.v} className="dropdown-item" onClick={() => { setOperationFilter(o.v as any); setActiveDropdown(null); }}>{o.l}</div>
@@ -427,53 +665,7 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
             )}
           </div>
 
-          {/* ACCOUNT Filter */}
-          <div className="relative">
-            <button className={`chip-btn ${accountFilter !== 'all' ? 'active' : ''}`} onClick={(e) => toggleDropdown('acc', e)}>
-              <CreditCard size={16} /> {accountFilter === 'all' ? 'Все счета' : users.find(u=>u.login===accountFilter)?.nickname} <ChevronDown size={14}/>
-            </button>
-            {activeDropdown === 'acc' && createPortal(
-              <div 
-                className="dropdown-menu p-1 dropdown-portal-root" 
-                style={{
-                  position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, maxHeight: 300, overflowY: 'auto', marginTop: 0
-                }}
-              >
-                <div className="dropdown-item" onClick={() => { setAccountFilter('all'); setActiveDropdown(null); }}>Все счета</div>
-                {users.map(u => (
-                  <div key={u.id} className="dropdown-item" onClick={() => { setAccountFilter(u.login); setActiveDropdown(null); }}>
-                    {u.nickname || u.login}
-                  </div>
-                ))}
-              </div>,
-              document.body
-            )}
-          </div>
-
-          {/* PROJECT Filter */}
-          <div className="relative">
-            <button className={`chip-btn ${projectKeyFilter !== 'all' ? 'active' : ''}`} onClick={(e) => toggleDropdown('proj', e)}>
-              <Briefcase size={16} /> {projectKeyFilter === 'all' ? 'Все проекты' : 'Выбран проект'} <ChevronDown size={14}/>
-            </button>
-            {activeDropdown === 'proj' && createPortal(
-              <div 
-                className="dropdown-menu p-1 dropdown-portal-root" 
-                style={{
-                  position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999, maxHeight: 400, overflowY: 'auto', marginTop: 0
-                }}
-              >
-                <div className="dropdown-item" onClick={() => { setProjectKeyFilter('all'); setActiveDropdown(null); }}>Все проекты</div>
-                {projectKeyOptions.map(p => (
-                  <div key={p.id} className="dropdown-item" onClick={() => { setProjectKeyFilter(p.id); setActiveDropdown(null); }}>
-                    <div className="truncate text-sm">{p.label}</div>
-                  </div>
-                ))}
-              </div>,
-              document.body
-            )}
-          </div>
-
-          {/* AMOUNT Filter (Modal based, no portal needed) */}
+          {/* 5. AMOUNT Filter */}
           <button className={`chip-btn ${amountRange.min||amountRange.max ? 'active' : ''}`} onClick={() => { setAmountTemp(amountRange); setAmountDialogOpen(true); }}>
             <Filter size={16} /> Сумма {amountRange.min||amountRange.max ? '...' : ''}
           </button>
@@ -508,7 +700,7 @@ const TransactionsPage: React.FC<{ showError: (msg: string) => void }> = ({ show
                     return (
                       <tr key={row.id} className="hover:bg-sidebar">
                         <td style={{textAlign: 'center'}} className="text-sm">
-                          {row.date ? new Date(row.date).toLocaleDateString('ru') : <span className="badge badge-primary">План</span>}
+                          {row.date ? dayjs(row.date).format('DD.MM.YYYY') : <span className="badge badge-primary">План</span>}
                         </td>
                         <td style={{textAlign: 'right'}}>
                           <div className={`font-mono font-bold ${isExpense ? 'text-danger' : 'text-success'}`}>
